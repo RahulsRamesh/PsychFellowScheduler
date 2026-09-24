@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+*.egg-info/
+.env
+
+# Reference/source material — not part of the shipped engine or API
+# (original docs, v1 prototype, task spec, real fellow/schedule data)
+reference_material/
