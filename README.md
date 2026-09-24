@@ -22,15 +22,7 @@ v2/                               # the engine (this is what main.py wraps)
   verify.py                       # verify_schedule(config, result) -> hard-rule violations
   run.py                          # CLI: solve + verify, print summary (--config to override input)
   test_verify.py                  # pytest: verifier catches a corrupted schedule per hard rule
-
-# gitignored — local reference/real data only, never pushed:
-reference_material/
-  rule_engine.py                    # v1 prototype (fixed-supervisor input)
-  config_from_real_data.json        # real H2 2026 schedule input (has real fellow names)
-  real_cases.json                   # real H2 2026 ground-truth schedule
-  Assessment Blocks ....xlsx/docx   # coordinator's original source files
-  claude_code_prompt.md             # full rule specification
-```
+'''
 
 `verify.py` deliberately imports only `helpers.py`, never `solve.py` —
 it re-derives and checks every hard rule independently from the solver's
