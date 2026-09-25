@@ -9,13 +9,9 @@
 
 const isLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
 
-// TODO: confirm this against the actual URL shown in the Render
-// dashboard for the live service (it defaults to the render.yaml
-// service name, "psych-fellow-scheduling-api", but Render appends a
-// random suffix if that name was already taken).
 const API_BASE = isLocal
   ? "http://127.0.0.1:8000"
-  : "https://psych-fellow-scheduling-api.onrender.com";
+  : "https://psychfellowscheduler.onrender.com";
 
 // TODO: must match the API_KEY env var set on the Render service
 // (render.yaml declares it with sync: false, so the value only lives in
