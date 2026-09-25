@@ -22,7 +22,12 @@ v2/                               # the engine (this is what main.py wraps)
   verify.py                       # verify_schedule(config, result) -> hard-rule violations
   run.py                          # CLI: solve + verify, print summary (--config to override input)
   test_verify.py                  # pytest: verifier catches a corrupted schedule per hard rule
-'''
+docs/                             # the frontend — deployed via GitHub Pages (see "Frontend" below)
+  index.html                      # form + results page
+  style.css
+  config.js                       # API_BASE / API_KEY — see "Frontend" for why this is public
+  app.js                          # form logic, validation, fetch, results rendering
+```
 
 `verify.py` deliberately imports only `helpers.py`, never `solve.py` —
 it re-derives and checks every hard rule independently from the solver's
@@ -71,19 +76,60 @@ Run the API locally:
 ```
 
 then `GET http://127.0.0.1:8000/health`, or `POST /solve` with a config
-JSON body (see `sample_config.json` for the shape — interactive docs at
-`/docs`).
+JSON body + `X-API-Key` header (see `sample_config.json` for the shape —
+interactive docs at `/docs`, a FastAPI URL path, unrelated to the
+repo's `docs/` frontend folder despite the name coincidence).
+
+Run the frontend locally against it:
+
+```
+python3 -m http.server 8080 --directory docs
+```
+
+then open `http://127.0.0.1:8080/index.html` — `docs/config.js`
+auto-detects `localhost`/`127.0.0.1` and points at the local API.
 
 ## API
 
-- `GET /health` — returns `{"status": "ok"}`. Render's health check target.
-- `POST /solve` — body is a config dict (clinic dates, holidays, fellows,
-  supervisors — no pre-assigned case supervisors; those are solved for).
-  Returns `{"result": {...}, "hard_rule_violations": [...]}`, where
-  `result` is `solve()`'s full output (status, per-rule soft-violation
-  breakdown, per-supervisor case load, and the schedule itself) and
+- `GET /health` — returns `{"status": "ok"}`. Render's health check
+  target. Intentionally unauthenticated.
+- `POST /solve` — requires an `X-API-Key` header matching the `API_KEY`
+  env var (see "Frontend" below for what this is and isn't). Body is a
+  config dict (clinic dates, holidays, fellows, supervisors — no
+  pre-assigned case supervisors; those are solved for). Returns
+  `{"result": {...}, "hard_rule_violations": [...]}`, where `result` is
+  `solve()`'s full output (status, per-rule soft-violation breakdown,
+  per-supervisor case load, and the schedule itself) and
   `hard_rule_violations` is the independent verifier's output (empty list
   = clean).
+
+## Frontend
+
+`docs/` is a static, zero-build-step site (plain HTML/CSS/vanilla JS):
+a form for clinic dates, holidays, supervisor vacations, and fellows,
+which calls `POST /solve` and renders the resulting schedule. PhD
+supervisor names (Walshaw/Ellis/Marvin) are fixed in the form, not
+editable — they're hardcoded in `v2/helpers.py`'s `SUPERVISOR_INDEX` for
+the same reason (rule 10 is tied to the specific name "Marvin").
+
+**Deploying it**: GitHub repo → Settings → Pages → Source: "Deploy from a
+branch" → Branch `main`, folder `/docs` → Save. No Actions workflow
+needed; it redeploys automatically on every push to `main` that touches
+`docs/`.
+
+**The `X-API-Key` in `docs/config.js` is not real security** — it's a
+static value baked into public, viewable JS source (anyone can read it
+via "view source"). It exists only to block casual/automated drive-by
+requests against the open Render URL, not a determined actor. This was a
+deliberate tradeoff (zero login friction for the coordinator, no PHI at
+stake) — see `main.py`'s `require_api_key()` for the server-side check.
+
+**Render's free tier spins down after ~15 min idle** and cold-starts in
+~30-60s on the next request — the solve itself is fast (well under 1s at
+this problem size), so that wake-up is the only real latency the UI has
+to handle. `app.js` pings `/health` on page load to start the wake-up
+early, and shows a "waking up the server" message if the solve request
+runs long.
 
 ## Deployment (Render)
 
@@ -91,6 +137,15 @@ JSON body (see `sample_config.json` for the shape — interactive docs at
 requirements.txt`, then `uvicorn main:app --host 0.0.0.0 --port $PORT`,
 with `/health` as the health check path.
 
-`ALLOWED_ORIGINS` (env var, comma-separated) controls CORS — defaults to
-`*`. Once the frontend has a real domain (e.g. a GitHub Pages URL), set
-this to that origin instead of leaving it open.
+Env vars:
+- `ALLOWED_ORIGINS` (comma-separated) controls CORS — set to the real
+  GitHub Pages origin (scheme+host only, no path, e.g.
+  `https://rahulsramesh.github.io`), not `*`, once Pages is live.
+- `API_KEY` — the shared value `docs/config.js` sends as `X-API-Key`.
+  Declared in `render.yaml` with `sync: false`, so only its existence is
+  committed; set the actual value in the Render dashboard.
+
+Because the service was likely already provisioned before these env vars
+were added to `render.yaml`, don't assume a blueprint sync will apply
+them — set/confirm both directly in the Render dashboard for the live
+service.

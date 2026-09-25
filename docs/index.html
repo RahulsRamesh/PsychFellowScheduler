@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Psych Fellow Scheduling</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Psych Fellow Scheduling</h1>
+  <p class="subtitle">Build a 6-month fellow rotation schedule from clinic dates, holidays, and vacations.</p>
+</header>
+
+<main>
+  <form id="schedule-form" novalidate>
+
+    <div id="form-errors" class="error-banner" hidden>
+      <strong>Please fix the following before generating a schedule:</strong>
+      <ul id="form-errors-list"></ul>
+    </div>
+
+    <fieldset>
+      <legend>Clinic dates</legend>
+      <div class="field-row">
+        <label>
+          Start date
+          <input type="date" id="clinic_start" required>
+        </label>
+        <label>
+          End date
+          <input type="date" id="clinic_end" required>
+        </label>
+      </div>
+      <small class="field-error" id="clinic-dates-error"></small>
+    </fieldset>
+
+    <fieldset>
+      <legend>Holidays</legend>
+      <p class="hint">Date ranges when no appointments can be scheduled (only the Mondays within a range matter).</p>
+      <div class="date-range-list" id="holidays-list"></div>
+      <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target="#holidays-list">+ Add holiday</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>PhD Supervisors</legend>
+      <p class="hint">Supervisor names are fixed by the scheduling rules and can't be changed here.</p>
+
+      <div class="supervisor-block">
+        <h3>Walshaw</h3>
+        <div class="date-range-list" data-supervisor="Walshaw"></div>
+        <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target='[data-supervisor="Walshaw"]'>+ Add vacation</button>
+      </div>
+
+      <div class="supervisor-block">
+        <h3>Ellis</h3>
+        <div class="date-range-list" data-supervisor="Ellis"></div>
+        <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target='[data-supervisor="Ellis"]'>+ Add vacation</button>
+      </div>
+
+      <div class="supervisor-block">
+        <h3>Marvin</h3>
+        <div class="date-range-list" data-supervisor="Marvin"></div>
+        <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target='[data-supervisor="Marvin"]'>+ Add vacation</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>MD Supervisor</legend>
+      <div class="supervisor-block">
+        <label>
+          Name
+          <input type="text" id="md-name" placeholder="e.g. Horstmann" required>
+        </label>
+        <small class="field-error" id="md-name-error"></small>
+        <div class="date-range-list" id="md-vacations-list"></div>
+        <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target="#md-vacations-list">+ Add vacation</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Fellows</legend>
+      <div id="fellows-list"></div>
+      <button type="button" class="add-btn" data-action="add-fellow">+ Add fellow</button>
+    </fieldset>
+
+    <div class="submit-row">
+      <button type="submit" id="submit-btn">Generate schedule</button>
+    </div>
+  </form>
+
+  <div id="loading" class="loading" hidden>
+    <div class="spinner"></div>
+    <p id="loading-message">Contacting scheduler…</p>
+  </div>
+
+  <div id="error-banner" class="error-banner" hidden>
+    <p id="error-message"></p>
+    <button type="button" id="retry-btn" hidden>Try again</button>
+  </div>
+
+  <section id="results" hidden></section>
+</main>
+
+<!-- Reusable row templates, cloned by app.js -->
+<template id="tpl-daterange-row">
+  <div class="row date-range-row">
+    <input type="date" class="start" required>
+    <span class="to">to</span>
+    <input type="date" class="end" required>
+    <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove date range">&times;</button>
+    <small class="field-error"></small>
+  </div>
+</template>
+
+<template id="tpl-fellow-row">
+  <div class="row fellow-row">
+    <div class="fellow-row-header">
+      <input type="text" class="fellow-name" placeholder="Fellow name" required>
+      <select class="fellow-type">
+        <option value="full-time">Full-time</option>
+        <option value="research">Research</option>
+      </select>
+      <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove fellow">&times;</button>
+    </div>
+    <small class="field-error"></small>
+    <div class="date-range-list vacation-list"></div>
+    <button type="button" class="add-btn small" data-action="add-row" data-template="#tpl-daterange-row" data-target=".vacation-list">+ Add vacation</button>
+  </div>
+</template>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,17 +1,18 @@
 """
 HTTP API wrapping the v2 scheduling engine, for deployment on Render.
 
-A separate frontend project calls POST /solve with a config JSON body
-(same shape as config_from_real_data.json, minus the unused v1-era
-`case_supervisors` key) and gets back the solved schedule plus the
-independent verifier's hard-rule check.
+The docs/ frontend (deployed separately via GitHub Pages) calls POST
+/solve with a config JSON body (see sample_config.json for the shape,
+minus the unused v1-era `case_supervisors` key) and gets back the solved
+schedule plus the independent verifier's hard-rule check. /solve requires
+an X-API-Key header matching the API_KEY env var (see require_api_key).
 
 Run locally: uvicorn main:app --reload
 """
 
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from v2.solve import solve
@@ -38,14 +39,28 @@ app.add_middleware(
 )
 
 
+def require_api_key(x_api_key: str = Header(None)):
+    """Gate on a static shared key, checked via the X-API-Key header.
+
+    This is NOT real authentication — the frontend is a public static
+    site, so this key is visible to anyone who reads its JS source. It
+    exists only to block casual/automated drive-by requests against the
+    open Render URL, not a determined actor. Deliberately not applied to
+    /health, since Render's own health checks send no custom headers.
+    """
+    expected = os.environ.get("API_KEY")
+    if not expected or x_api_key != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing API key")
+
+
 @app.get("/health")
 def health():
-    """Render's health check target."""
+    """Render's health check target. Intentionally unauthenticated."""
     return {"status": "ok"}
 
 
 @app.post("/solve")
-def solve_endpoint(config: dict):
+def solve_endpoint(config: dict, _: None = Depends(require_api_key)):
     # v1-era leftover some config files may still carry — unused now that
     # supervisor assignment is solved for, not fixed input.
     config.pop("case_supervisors", None)
