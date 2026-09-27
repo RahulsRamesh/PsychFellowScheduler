@@ -442,6 +442,96 @@ function statTile(label, value, max) {
   return div;
 }
 
+function supervisorText(c) {
+  return c.secondary_supervisor && c.secondary_supervisor !== c.primary_supervisor
+    ? `${c.primary_supervisor} (KSADS3: ${c.secondary_supervisor})`
+    : c.primary_supervisor;
+}
+
+function visitTable(visits) {
+  const table = document.createElement("table");
+  table.className = "visit-table";
+  table.innerHTML = `
+    <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
+    <tbody>
+      ${visits.map((v) => `<tr><td>${v.type}</td><td>${v.date}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
+    </tbody>
+  `;
+  return table;
+}
+
+// Groups cases either by fellow (each fellow's cases in case-# order) or
+// by case #, i.e. "round" (all fellows' case 0s together, then all case
+// 1s, etc. — mirrors the coordinator's original Excel layout). Research
+// fellows only have cases 0-1, so case-2/3 groups naturally contain only
+// full-time fellows — that's correct, not a bug.
+function renderSchedule(container, cases, groupBy) {
+  container.innerHTML = "";
+
+  if (groupBy === "case") {
+    const byCaseIndex = new Map();
+    cases.forEach((c) => {
+      if (!byCaseIndex.has(c.case_index)) byCaseIndex.set(c.case_index, []);
+      byCaseIndex.get(c.case_index).push(c);
+    });
+
+    [...byCaseIndex.keys()].sort((a, b) => a - b).forEach((caseIndex) => {
+      const group = byCaseIndex.get(caseIndex).sort((a, b) => a.fellow.localeCompare(b.fellow));
+      const details = document.createElement("details");
+      details.className = "fellow-block";
+      details.open = true;
+
+      const summary = document.createElement("summary");
+      summary.textContent = `Case ${caseIndex} — tier ${group[0].tier}`;
+      details.appendChild(summary);
+
+      group.forEach((c) => {
+        const caseBlock = document.createElement("div");
+        caseBlock.className = "case-block";
+        const h4 = document.createElement("h4");
+        h4.textContent = `${c.fellow} — ${supervisorText(c)}`;
+        caseBlock.appendChild(h4);
+        caseBlock.appendChild(visitTable(c.visits));
+        details.appendChild(caseBlock);
+      });
+
+      container.appendChild(details);
+    });
+    return;
+  }
+
+  // groupBy === "fellow" (default)
+  const byFellow = new Map();
+  cases.forEach((c) => {
+    if (!byFellow.has(c.fellow)) byFellow.set(c.fellow, []);
+    byFellow.get(c.fellow).push(c);
+  });
+
+  byFellow.forEach((fellowCases, fellow) => {
+    const details = document.createElement("details");
+    details.className = "fellow-block";
+    details.open = true;
+
+    const summary = document.createElement("summary");
+    summary.textContent = fellow;
+    details.appendChild(summary);
+
+    fellowCases
+      .sort((a, b) => a.case_index - b.case_index)
+      .forEach((c) => {
+        const caseBlock = document.createElement("div");
+        caseBlock.className = "case-block";
+        const h4 = document.createElement("h4");
+        h4.textContent = `Case ${c.case_index} — tier ${c.tier} — ${supervisorText(c)}`;
+        caseBlock.appendChild(h4);
+        caseBlock.appendChild(visitTable(c.visits));
+        details.appendChild(caseBlock);
+      });
+
+    container.appendChild(details);
+  });
+}
+
 function renderResults(result, hardRuleViolations) {
   resultsEl.innerHTML = "";
   resultsEl.hidden = false;
@@ -482,46 +572,30 @@ function renderResults(result, hardRuleViolations) {
   });
   resultsEl.appendChild(loadGrid);
 
-  const byFellow = new Map();
-  result.cases.forEach((c) => {
-    if (!byFellow.has(c.fellow)) byFellow.set(c.fellow, []);
-    byFellow.get(c.fellow).push(c);
-  });
+  // Group-by toggle: purely a client-side re-render of the already-
+  // fetched result.cases — no re-solve needed. Always starts on "fellow"
+  // for a fresh result, regardless of what was selected last time.
+  const toggleRow = document.createElement("div");
+  toggleRow.className = "group-toggle";
+  const byFellowBtn = document.createElement("button");
+  byFellowBtn.type = "button";
+  byFellowBtn.textContent = "By fellow";
+  const byCaseBtn = document.createElement("button");
+  byCaseBtn.type = "button";
+  byCaseBtn.textContent = "By case #";
+  toggleRow.append(byFellowBtn, byCaseBtn);
+  resultsEl.appendChild(toggleRow);
 
-  byFellow.forEach((cases, fellow) => {
-    const details = document.createElement("details");
-    details.className = "fellow-block";
-    details.open = true;
+  const scheduleContainer = document.createElement("div");
+  resultsEl.appendChild(scheduleContainer);
 
-    const summary = document.createElement("summary");
-    summary.textContent = fellow;
-    details.appendChild(summary);
+  function setGroupBy(groupBy) {
+    byFellowBtn.classList.toggle("active", groupBy === "fellow");
+    byCaseBtn.classList.toggle("active", groupBy === "case");
+    renderSchedule(scheduleContainer, result.cases, groupBy);
+  }
 
-    cases
-      .sort((a, b) => a.case_index - b.case_index)
-      .forEach((c) => {
-        const caseBlock = document.createElement("div");
-        caseBlock.className = "case-block";
-
-        const h4 = document.createElement("h4");
-        const supText = c.secondary_supervisor && c.secondary_supervisor !== c.primary_supervisor
-          ? `${c.primary_supervisor} (KSADS3: ${c.secondary_supervisor})`
-          : c.primary_supervisor;
-        h4.textContent = `Case ${c.case_index} — tier ${c.tier} — ${supText}`;
-        caseBlock.appendChild(h4);
-
-        const table = document.createElement("table");
-        table.className = "visit-table";
-        table.innerHTML = `
-          <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
-          <tbody>
-            ${c.visits.map((v) => `<tr><td>${v.type}</td><td>${v.date}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
-          </tbody>
-        `;
-        caseBlock.appendChild(table);
-        details.appendChild(caseBlock);
-      });
-
-    resultsEl.appendChild(details);
-  });
+  byFellowBtn.addEventListener("click", () => setGroupBy("fellow"));
+  byCaseBtn.addEventListener("click", () => setGroupBy("case"));
+  setGroupBy("fellow");
 }
