@@ -607,10 +607,14 @@ function renderResults(result, hardRuleViolations) {
   }
 
   function targetForSupervisor(name) {
+    // Primary only, matching supervisor_case_load's own definition (and
+    // this tile's displayed number) exactly — including secondary/KSADS3
+    // hand-offs here would highlight more cases than the tile's count,
+    // which is confusing rather than more informative.
     return {
       caseKeys: new Set(
         result.cases
-          .filter((c) => c.primary_supervisor === name || c.secondary_supervisor === name)
+          .filter((c) => c.primary_supervisor === name)
           .map((c) => caseKey(c.fellow, c.case_index)),
       ),
     };
