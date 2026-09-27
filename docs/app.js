@@ -470,13 +470,21 @@ function supervisorText(c) {
     : c.primary_supervisor;
 }
 
-function visitTable(visits) {
+// visitOrder "standard" keeps the template order (KSADS1, KSADS2, KSADS3,
+// Med, Feedback); "date" sorts chronologically instead. Dates are ISO
+// strings (YYYY-MM-DD), so a plain string sort is already chronological —
+// no Date parsing needed. All visits in a case have distinct dates (hard
+// rule), so there's never a tie to break.
+function visitTable(visits, visitOrder) {
+  const ordered = visitOrder === "date"
+    ? [...visits].sort((a, b) => a.date.localeCompare(b.date))
+    : visits;
   const table = document.createElement("table");
   table.className = "visit-table";
   table.innerHTML = `
     <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
     <tbody>
-      ${visits.map((v) => `<tr><td>${v.type}</td><td>${v.date}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
+      ${ordered.map((v) => `<tr><td>${v.type}</td><td>${v.date}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
     </tbody>
   `;
   return table;
@@ -492,7 +500,7 @@ function visitTable(visits) {
 // fellow-name label (the by-fellow <summary>, or the name <span> inside a
 // by-case# <h4>) gets class "fellow-label" + data-fellow, so stat-tile
 // highlighting can target elements identically in either grouping.
-function caseBlockFor(c, headingPrefixNodes) {
+function caseBlockFor(c, headingPrefixNodes, visitOrder) {
   const caseBlock = document.createElement("div");
   caseBlock.className = "case-block";
   caseBlock.dataset.fellow = c.fellow;
@@ -500,7 +508,7 @@ function caseBlockFor(c, headingPrefixNodes) {
   const h4 = document.createElement("h4");
   h4.append(...headingPrefixNodes);
   caseBlock.appendChild(h4);
-  caseBlock.appendChild(visitTable(c.visits));
+  caseBlock.appendChild(visitTable(c.visits, visitOrder));
   return caseBlock;
 }
 
@@ -512,7 +520,7 @@ function fellowLabel(tagName, fellow) {
   return el;
 }
 
-function renderSchedule(container, cases, groupBy) {
+function renderSchedule(container, cases, groupBy, visitOrder) {
   container.innerHTML = "";
 
   if (groupBy === "case") {
@@ -533,7 +541,7 @@ function renderSchedule(container, cases, groupBy) {
       details.appendChild(summary);
 
       group.forEach((c) => {
-        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — ${supervisorText(c)}`]));
+        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — ${supervisorText(c)}`], visitOrder));
       });
 
       container.appendChild(details);
@@ -558,7 +566,7 @@ function renderSchedule(container, cases, groupBy) {
     fellowCases
       .sort((a, b) => a.case_index - b.case_index)
       .forEach((c) => {
-        details.appendChild(caseBlockFor(c, [`Case ${c.case_index} — tier ${c.tier} — ${supervisorText(c)}`]));
+        details.appendChild(caseBlockFor(c, [`Case ${c.case_index} — tier ${c.tier} — ${supervisorText(c)}`], visitOrder));
       });
 
     container.appendChild(details);
@@ -683,9 +691,19 @@ function renderResults(result, hardRuleViolations) {
   });
   resultsEl.appendChild(loadGrid);
 
-  // Group-by toggle: purely a client-side re-render of the already-
-  // fetched result.cases — no re-solve needed. Always starts on "fellow"
+  // Two independent toggles: group-by (fellow vs case #) and visit order
+  // within each case's table (standard template order vs chronological).
+  // Both are purely client-side re-renders of the already-fetched
+  // result.cases — no re-solve needed. Both always reset to their default
   // for a fresh result, regardless of what was selected last time.
+  let currentGroupBy = "fellow";
+  let currentVisitOrder = "standard";
+
+  function rerenderSchedule() {
+    renderSchedule(scheduleContainer, result.cases, currentGroupBy, currentVisitOrder);
+    applyHighlights();
+  }
+
   const toggleRow = document.createElement("div");
   toggleRow.className = "group-toggle";
   const byFellowBtn = document.createElement("button");
@@ -697,17 +715,40 @@ function renderResults(result, hardRuleViolations) {
   toggleRow.append(byFellowBtn, byCaseBtn);
   resultsEl.appendChild(toggleRow);
 
+  const orderToggleRow = document.createElement("div");
+  orderToggleRow.className = "group-toggle";
+  const standardOrderBtn = document.createElement("button");
+  standardOrderBtn.type = "button";
+  standardOrderBtn.textContent = "Standard order";
+  const byDateBtn = document.createElement("button");
+  byDateBtn.type = "button";
+  byDateBtn.textContent = "By date";
+  orderToggleRow.append(standardOrderBtn, byDateBtn);
+  resultsEl.appendChild(orderToggleRow);
+
   const scheduleContainer = document.createElement("div");
   resultsEl.appendChild(scheduleContainer);
 
   function setGroupBy(groupBy) {
+    currentGroupBy = groupBy;
     byFellowBtn.classList.toggle("active", groupBy === "fellow");
     byCaseBtn.classList.toggle("active", groupBy === "case");
-    renderSchedule(scheduleContainer, result.cases, groupBy);
-    applyHighlights();
+    rerenderSchedule();
+  }
+
+  function setVisitOrder(order) {
+    currentVisitOrder = order;
+    standardOrderBtn.classList.toggle("active", order === "standard");
+    byDateBtn.classList.toggle("active", order === "date");
+    rerenderSchedule();
   }
 
   byFellowBtn.addEventListener("click", () => setGroupBy("fellow"));
   byCaseBtn.addEventListener("click", () => setGroupBy("case"));
-  setGroupBy("fellow");
+  standardOrderBtn.addEventListener("click", () => setVisitOrder("standard"));
+  byDateBtn.addEventListener("click", () => setVisitOrder("date"));
+
+  byFellowBtn.classList.add("active");
+  standardOrderBtn.classList.add("active");
+  rerenderSchedule();
 }
