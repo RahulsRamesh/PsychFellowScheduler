@@ -294,18 +294,27 @@ def solve(config: dict, time_limit_s: int = 30):
     # ======================================================================
 
     # ---- Soft 1: KSADS3 supervisor should match the primary supervisor ----
+    # ksads3_match_info runs parallel to penalty_ksads3_mismatch, recording
+    # which (case, fellow) each `match` bool belongs to, so that after
+    # solving we can report *which* cases mismatched, not just the count.
     penalty_ksads3_mismatch = []
+    ksads3_match_info = []  # (match_bool, fellow, case_index)
     for ci, case in enumerate(cases):
         if ci not in secondary_var:
             continue
         match = reified_eq(model, secondary_var[ci], primary_var[ci], f"ksads3_match_{ci}")
         penalty_ksads3_mismatch.append(match.Not())
+        ksads3_match_info.append((match, case["fellow"], case["case_index"]))
 
     # ---- Soft 2: each full-time fellow should have >=1 case with each PhD
     # supervisor across their cases. Research fellows are structurally
     # unsatisfiable here (only 2 cases for 3 supervisors) and must not be
     # penalized — so they simply produce no bools in this list at all.
+    # supervisor_variety_info runs parallel to penalty_supervisor_variety,
+    # recording which fellow each `covered` bool belongs to (the specific
+    # missing supervisor isn't reported — just the fellow's name).
     penalty_supervisor_variety = []
+    supervisor_variety_info = []  # (covered_bool, fellow)
     for fellow, case_ids in by_fellow.items():
         if fellows[fellow]["type"] != "full-time":
             continue
@@ -315,20 +324,31 @@ def solve(config: dict, time_limit_s: int = 30):
             covered = model.NewBoolVar(f"covered_{fellow}_{s_name}")
             model.AddMaxEquality(covered, eqs)
             penalty_supervisor_variety.append(covered.Not())
+            supervisor_variety_info.append((covered, fellow))
 
     # ---- Soft 3: Med position by tier (tier1: not first; tier2: first) ----
+    # med_position_info runs parallel to penalty_med_position, recording
+    # which (case, fellow) each violation bool belongs to.
     penalty_med_position = []
+    med_position_info = []  # (violation_bool, fellow, case_index)
     for ci, case in enumerate(cases):
         med_after_first = model.NewBoolVar(f"med_after_first_{ci}")
         model.Add(date_var[ci, "Med"] > date_var[ci, "KSADS1"]).OnlyEnforceIf(med_after_first)
         model.Add(date_var[ci, "Med"] < date_var[ci, "KSADS1"]).OnlyEnforceIf(med_after_first.Not())
         if case["tier"] == 1:
-            penalty_med_position.append(med_after_first.Not())  # prefer NOT first
+            violation = med_after_first.Not()  # prefer NOT first
         else:
-            penalty_med_position.append(med_after_first)  # prefer first
+            violation = med_after_first  # prefer first
+        penalty_med_position.append(violation)
+        med_position_info.append((violation, case["fellow"], case["case_index"]))
 
     # ---- Soft 4: ~1 week (7+ days) gap between a fellow's successive cases ----
+    # case_gap_info runs parallel to penalty_case_gap, recording which
+    # fellow and which pair of case_indexes (the case whose Feedback starts
+    # the gap, and the case whose first visit ends it) each `tight` bool
+    # belongs to.
     penalty_case_gap = []
+    case_gap_info = []  # (tight_bool, fellow, case_index_a, case_index_b)
     for fellow, case_ids in by_fellow.items():
         case_ids_sorted = sorted(case_ids, key=lambda ci: cases[ci]["case_index"])
         for a, b in zip(case_ids_sorted, case_ids_sorted[1:]):
@@ -339,6 +359,7 @@ def solve(config: dict, time_limit_s: int = 30):
             model.Add(gap < 7).OnlyEnforceIf(tight)
             model.Add(gap >= 7).OnlyEnforceIf(tight.Not())
             penalty_case_gap.append(tight)
+            case_gap_info.append((tight, fellow, cases[a]["case_index"], cases[b]["case_index"]))
 
     # Supervisor-related soft rules (1, 2) weighted noticeably higher than
     # positional ones (3, 4) — supervisor continuity matters more to the
@@ -356,10 +377,59 @@ def solve(config: dict, time_limit_s: int = 30):
     status = solver.Solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return {"status": "INFEASIBLE", "cases": [], "soft_violations": {}, "supervisor_case_load": {}}
+        return {"status": "INFEASIBLE", "cases": [], "soft_violations": {},
+                "soft_violation_details": {}, "supervisor_case_load": {}}
 
     def val(lst):
         return solver.Value(sum(lst)) if lst else 0
+
+    # ---- soft_violation_details: which specific (fellow, case) each soft
+    # rule's count is made of, independently re-derived from the same bools
+    # `val()` sums above — a frontend pairs "count" and "details" by the
+    # identical string keys used in soft_violations.
+    ksads3_mismatch_details = [
+        {"fellow": fellow, "case_index": case_index}
+        for match, fellow, case_index in ksads3_match_info
+        if solver.Value(match) == 0
+    ]
+
+    med_position_details = [
+        {"fellow": fellow, "case_index": case_index}
+        for violation, fellow, case_index in med_position_info
+        if solver.Value(violation) == 1
+    ]
+
+    # case_gap is inherently about a *transition* between two consecutive
+    # cases, not a single case — each tight transition implicates both the
+    # earlier case (whose Feedback started the gap) and the later case
+    # (whose first visit ended it). A case can show up via two different
+    # tight transitions (incoming and outgoing), so this list is deduped by
+    # (fellow, case_index). NOTE: because of this, len(case_gap_details)
+    # will generally NOT equal soft_violations["case_gap (soft #4)"] — the
+    # count is a count of tight *transitions*, this list is a set of
+    # *cases* touched by at least one tight transition. That mismatch is
+    # expected and correct; do not "fix" it into a spurious equality.
+    case_gap_details = []
+    _case_gap_seen = set()
+    for tight, fellow, case_index_a, case_index_b in case_gap_info:
+        if solver.Value(tight) == 1:
+            for case_index in (case_index_a, case_index_b):
+                key = (fellow, case_index)
+                if key not in _case_gap_seen:
+                    _case_gap_seen.add(key)
+                    case_gap_details.append({"fellow": fellow, "case_index": case_index})
+
+    # supervisor_variety: deduped to unique fellow names, not (fellow,
+    # supervisor) pairs — a fellow missing 2 of the 3 PhD supervisors
+    # contributes 2 to soft_violations' raw count but only 1 entry here.
+    # That mismatch is expected and correct; do not "fix" it into a
+    # spurious equality.
+    supervisor_variety_details = []
+    _supervisor_variety_seen = set()
+    for covered, fellow in supervisor_variety_info:
+        if solver.Value(covered.Not()) == 1 and fellow not in _supervisor_variety_seen:
+            _supervisor_variety_seen.add(fellow)
+            supervisor_variety_details.append(fellow)
 
     out_cases = []
     for ci, case in enumerate(cases):
@@ -398,6 +468,12 @@ def solve(config: dict, time_limit_s: int = 30):
             "ksads3_mismatch (soft #1)": val(penalty_ksads3_mismatch),
             "med_position (soft #3)": val(penalty_med_position),
             "case_gap (soft #4)": val(penalty_case_gap),
+        },
+        "soft_violation_details": {
+            "supervisor_variety (soft #2)": supervisor_variety_details,
+            "ksads3_mismatch (soft #1)": ksads3_mismatch_details,
+            "med_position (soft #3)": med_position_details,
+            "case_gap (soft #4)": case_gap_details,
         },
         "supervisor_case_load": supervisor_case_load,
         "cases": out_cases,
