@@ -66,6 +66,61 @@ function addFellowRow() {
 addFellowRow();
 
 // ---------------------------------------------------------------------
+// Dev-only "Load sample data" button — gated on config.js's
+// SHOW_LOAD_SAMPLE_BUTTON. Testing convenience, not coordinator-facing.
+// ---------------------------------------------------------------------
+
+function addFilledDateRangeRow(container, start, end) {
+  const tpl = document.getElementById("tpl-daterange-row");
+  const node = tpl.content.cloneNode(true);
+  node.querySelector(".start").value = start;
+  node.querySelector(".end").value = end;
+  container.appendChild(node);
+}
+
+function loadSampleData() {
+  document.getElementById("clinic_start").value = SAMPLE_DATA.clinic_start;
+  document.getElementById("clinic_end").value = SAMPLE_DATA.clinic_end;
+
+  const holidaysListEl = document.getElementById("holidays-list");
+  holidaysListEl.innerHTML = "";
+  SAMPLE_DATA.holidays.forEach(([s, e]) => addFilledDateRangeRow(holidaysListEl, s, e));
+
+  PHD_NAMES.forEach((name) => {
+    const container = document.querySelector(`[data-supervisor="${name}"]`);
+    container.innerHTML = "";
+    (SAMPLE_DATA.supervisor_vacations[name] || []).forEach(([s, e]) => addFilledDateRangeRow(container, s, e));
+  });
+
+  document.getElementById("md-name").value = SAMPLE_DATA.md.name;
+  const mdVacationsEl = document.getElementById("md-vacations-list");
+  mdVacationsEl.innerHTML = "";
+  SAMPLE_DATA.md.vacations.forEach(([s, e]) => addFilledDateRangeRow(mdVacationsEl, s, e));
+
+  fellowsList.innerHTML = "";
+  SAMPLE_DATA.fellows.forEach((f) => {
+    addFellowRow();
+    const row = fellowsList.lastElementChild;
+    row.querySelector(".fellow-name").value = f.name;
+    row.querySelector(".fellow-type").value = f.type;
+    const vacationsEl = row.querySelector(".vacation-list");
+    f.vacations.forEach(([s, e]) => addFilledDateRangeRow(vacationsEl, s, e));
+  });
+
+  // Reset any stale validation/result state left over from a prior attempt.
+  document.querySelectorAll(".invalid").forEach((el) => el.classList.remove("invalid"));
+  document.querySelectorAll(".field-error").forEach((el) => { el.textContent = ""; });
+  formErrorsBox.hidden = true;
+  hideError();
+  resultsEl.hidden = true;
+}
+
+if (typeof SHOW_LOAD_SAMPLE_BUTTON !== "undefined" && SHOW_LOAD_SAMPLE_BUTTON) {
+  document.getElementById("dev-tools").hidden = false;
+  document.getElementById("load-sample-btn").addEventListener("click", loadSampleData);
+}
+
+// ---------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------
 

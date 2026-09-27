@@ -23,3 +23,8 @@ const API_KEY = "BxmmGK7AhSsotOQGNoGQiPzsWgd4byURTwX3v_-3HEM";
 // beats a premature timeout that forces the coordinator to restart the
 // same wait.
 const SOLVE_TIMEOUT_MS = 100000;
+
+// Dev/testing convenience only — a "Load sample data" button that fills
+// the whole form in one click. Not meant for the coordinator; flip to
+// false before/while this is coordinator-facing.
+const SHOW_LOAD_SAMPLE_BUTTON = true;
