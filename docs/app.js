@@ -430,15 +430,37 @@ const SOFT_RULE_LABELS = {
   "case_gap (soft #4)": "Gap between cases",
 };
 
-function statTile(label, value, max) {
+const SOFT_RULE_TOOLTIPS = {
+  "supervisor_variety (soft #2)": "How many full-time fellows failed to get at least one case with each of the 3 PhD supervisors across their 4 cases. Research fellows are excluded — structurally impossible with only 2 cases.",
+  "ksads3_mismatch (soft #1)": "How many tier-1 cases had KSADS3 supervised by someone different from KSADS1/2's supervisor (the 'escape valve,' used to avoid a double-booking).",
+  "med_position (soft #3)": "How many cases broke the preferred Med-visit timing: tier-1 cases shouldn't start with Med, tier-2 cases should.",
+  "case_gap (soft #4)": "How many times a fellow's next case started less than ~1 week after the previous case's Feedback appointment.",
+};
+
+function supervisorLoadTooltip(name) {
+  return `Number of cases where ${name} is the primary KSADS1/2 supervisor, across the whole schedule — a sanity check for balanced workload.`;
+}
+
+// Tiles are clickable (see renderResults) — a div with role="button"
+// rather than a <button>, since the tile's block-level children aren't
+// valid inside a real <button>.
+function statTile(label, value, max, tooltip) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   const div = document.createElement("div");
   div.className = "stat-tile";
+  div.setAttribute("role", "button");
+  div.setAttribute("tabindex", "0");
+  div.setAttribute("aria-pressed", "false");
   div.innerHTML = `
+    <span class="stat-info" aria-hidden="true">ⓘ</span>
     <div class="stat-label">${label}</div>
     <div class="stat-value">${value}</div>
     <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
   `;
+  if (tooltip) {
+    div.querySelector(".stat-info").title = tooltip;
+    div.setAttribute("aria-description", tooltip);
+  }
   return div;
 }
 
@@ -465,6 +487,31 @@ function visitTable(visits) {
 // 1s, etc. — mirrors the coordinator's original Excel layout). Research
 // fellows only have cases 0-1, so case-2/3 groups naturally contain only
 // full-time fellows — that's correct, not a bug.
+//
+// Every case block is stamped with data-fellow/data-case-index, and every
+// fellow-name label (the by-fellow <summary>, or the name <span> inside a
+// by-case# <h4>) gets class "fellow-label" + data-fellow, so stat-tile
+// highlighting can target elements identically in either grouping.
+function caseBlockFor(c, headingPrefixNodes) {
+  const caseBlock = document.createElement("div");
+  caseBlock.className = "case-block";
+  caseBlock.dataset.fellow = c.fellow;
+  caseBlock.dataset.caseIndex = String(c.case_index);
+  const h4 = document.createElement("h4");
+  h4.append(...headingPrefixNodes);
+  caseBlock.appendChild(h4);
+  caseBlock.appendChild(visitTable(c.visits));
+  return caseBlock;
+}
+
+function fellowLabel(tagName, fellow) {
+  const el = document.createElement(tagName);
+  el.className = "fellow-label";
+  el.dataset.fellow = fellow;
+  el.textContent = fellow;
+  return el;
+}
+
 function renderSchedule(container, cases, groupBy) {
   container.innerHTML = "";
 
@@ -486,13 +533,7 @@ function renderSchedule(container, cases, groupBy) {
       details.appendChild(summary);
 
       group.forEach((c) => {
-        const caseBlock = document.createElement("div");
-        caseBlock.className = "case-block";
-        const h4 = document.createElement("h4");
-        h4.textContent = `${c.fellow} — ${supervisorText(c)}`;
-        caseBlock.appendChild(h4);
-        caseBlock.appendChild(visitTable(c.visits));
-        details.appendChild(caseBlock);
+        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — ${supervisorText(c)}`]));
       });
 
       container.appendChild(details);
@@ -512,20 +553,12 @@ function renderSchedule(container, cases, groupBy) {
     details.className = "fellow-block";
     details.open = true;
 
-    const summary = document.createElement("summary");
-    summary.textContent = fellow;
-    details.appendChild(summary);
+    details.appendChild(fellowLabel("summary", fellow));
 
     fellowCases
       .sort((a, b) => a.case_index - b.case_index)
       .forEach((c) => {
-        const caseBlock = document.createElement("div");
-        caseBlock.className = "case-block";
-        const h4 = document.createElement("h4");
-        h4.textContent = `Case ${c.case_index} — tier ${c.tier} — ${supervisorText(c)}`;
-        caseBlock.appendChild(h4);
-        caseBlock.appendChild(visitTable(c.visits));
-        details.appendChild(caseBlock);
+        details.appendChild(caseBlockFor(c, [`Case ${c.case_index} — tier ${c.tier} — ${supervisorText(c)}`]));
       });
 
     container.appendChild(details);
@@ -554,12 +587,84 @@ function renderResults(result, hardRuleViolations) {
   }
   resultsEl.appendChild(verifyLine);
 
+  // Click-to-highlight: at most one tile is active at a time. The active
+  // tile's highlight target lives here (not in the DOM) so it survives the
+  // schedule re-render that the group-by toggle triggers. A fresh
+  // renderResults() call starts with nothing active.
+  //   target = { fellowNames: Set<string> }            — name-only highlight
+  //          | { caseKeys: Set<"fellow\u0000index"> }  — full case-block highlight
+  let activeTile = null;
+  let activeTarget = null;
+  const caseKey = (fellow, caseIndex) => `${fellow}\u0000${caseIndex}`;
+  const softDetails = result.soft_violation_details || {};
+
+  function targetForSoftRule(key) {
+    const entries = softDetails[key] || [];
+    if (key.startsWith("supervisor_variety")) {
+      return { fellowNames: new Set(entries) };
+    }
+    return { caseKeys: new Set(entries.map((e) => caseKey(e.fellow, e.case_index))) };
+  }
+
+  function targetForSupervisor(name) {
+    return {
+      caseKeys: new Set(
+        result.cases
+          .filter((c) => c.primary_supervisor === name || c.secondary_supervisor === name)
+          .map((c) => caseKey(c.fellow, c.case_index)),
+      ),
+    };
+  }
+
+  function applyHighlights() {
+    scheduleContainer.querySelectorAll(".highlighted").forEach((el) => el.classList.remove("highlighted"));
+    if (!activeTarget) return;
+    if (activeTarget.fellowNames) {
+      scheduleContainer.querySelectorAll(".fellow-label[data-fellow]").forEach((el) => {
+        if (activeTarget.fellowNames.has(el.dataset.fellow)) el.classList.add("highlighted");
+      });
+    } else {
+      scheduleContainer.querySelectorAll(".case-block[data-fellow]").forEach((el) => {
+        if (activeTarget.caseKeys.has(caseKey(el.dataset.fellow, el.dataset.caseIndex))) el.classList.add("highlighted");
+      });
+    }
+  }
+
+  function wireTile(tile, makeTarget) {
+    const toggle = () => {
+      if (activeTile) {
+        activeTile.classList.remove("active");
+        activeTile.setAttribute("aria-pressed", "false");
+      }
+      if (activeTile === tile) {
+        activeTile = null;
+        activeTarget = null;
+      } else {
+        activeTile = tile;
+        activeTarget = makeTarget();
+        tile.classList.add("active");
+        tile.setAttribute("aria-pressed", "true");
+      }
+      applyHighlights();
+    };
+    tile.addEventListener("click", toggle);
+    tile.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    return tile;
+  }
+
   const softValues = Object.values(result.soft_violations);
   const softMax = Math.max(1, ...softValues);
   const softGrid = document.createElement("div");
   softGrid.className = "stat-grid";
   Object.entries(result.soft_violations).forEach(([key, value]) => {
-    softGrid.appendChild(statTile(SOFT_RULE_LABELS[key] || key, value, softMax));
+    const tile = statTile(SOFT_RULE_LABELS[key] || key, value, softMax, SOFT_RULE_TOOLTIPS[key]);
+    tile.dataset.tile = key;
+    softGrid.appendChild(wireTile(tile, () => targetForSoftRule(key)));
   });
   resultsEl.appendChild(softGrid);
 
@@ -568,7 +673,9 @@ function renderResults(result, hardRuleViolations) {
   const loadGrid = document.createElement("div");
   loadGrid.className = "stat-grid";
   Object.entries(result.supervisor_case_load).forEach(([name, count]) => {
-    loadGrid.appendChild(statTile(name, count, loadMax));
+    const tile = statTile(name, count, loadMax, supervisorLoadTooltip(name));
+    tile.dataset.tile = name;
+    loadGrid.appendChild(wireTile(tile, () => targetForSupervisor(name)));
   });
   resultsEl.appendChild(loadGrid);
 
@@ -593,6 +700,7 @@ function renderResults(result, hardRuleViolations) {
     byFellowBtn.classList.toggle("active", groupBy === "fellow");
     byCaseBtn.classList.toggle("active", groupBy === "case");
     renderSchedule(scheduleContainer, result.cases, groupBy);
+    applyHighlights();
   }
 
   byFellowBtn.addEventListener("click", () => setGroupBy("fellow"));
