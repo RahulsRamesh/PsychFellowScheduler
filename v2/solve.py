@@ -168,6 +168,10 @@ def solve(config: dict, time_limit_s: int = 30):
                 model.Add(date_var[ci, all_vt[i]] != date_var[ci, all_vt[j]])
 
     # ---- Rule 9: at least one in-person appointment per case ----
+    # Now trivially satisfied by construction — see Rule 10 below, which
+    # forces Med in-person in every case unconditionally — but kept as an
+    # explicit, independent check of the literal rule rather than relying
+    # on that as an implicit side effect.
     for ci, case in enumerate(cases):
         model.Add(sum(modality_var[ci, vt] for vt in case["template"]) >= 1)
 
@@ -243,24 +247,46 @@ def solve(config: dict, time_limit_s: int = 30):
             sup_eq = reified_eq(model, s1, s2, f"pseq_{ci1}{vt1}_{ci2}{vt2}")
             model.Add(date_eq + sup_eq <= 1)
 
-    # ---- Rule 10: case_index==0 with Marvin as primary supervisor ----
-    # Applies ONLY to the case with case_index == 0 for a fellow, and ONLY
-    # when THAT case's primary supervisor is Marvin — deliberately not the
-    # fellow's chronologically-first Marvin case (v1's approach), which is
-    # a different, now-incorrect rule per the current spec. The condition
-    # checks primary_var only: if the KSADS3 escape valve later reassigns
-    # away from Marvin, KSADS3 still stays telehealth here, since this rule
-    # is about the case's designated primary supervisor, not who actually
-    # ends up running KSADS3.
-    for fellow, case_ids in by_fellow.items():
-        case0 = next(ci for ci in case_ids if cases[ci]["case_index"] == 0)
-        is_primary_marvin = reified_eq(model, primary_var[case0], SUPERVISOR_INDEX["Marvin"],
-                                        f"case0_marvin_{fellow}")
-        for vt in cases[case0]["template"]:
-            if vt.startswith("KSADS"):
-                model.Add(modality_var[case0, vt] == 0).OnlyEnforceIf(is_primary_marvin)  # telehealth
-            elif vt == "Med":
-                model.Add(modality_var[case0, vt] == 1).OnlyEnforceIf(is_primary_marvin)  # in-person
+    # ---- Rule 10 (updated 2026-09-27): modality defaults to in-person;
+    # the only telehealth exception is a visit in a case_index==0 case
+    # that Marvin actually supervises ----
+    # Coordinator's reasoning: a fellow only shadows (doesn't lead) their
+    # supervisor during their very first case, and Marvin supervises fully
+    # virtually — so telehealth requires BOTH case_index==0 AND Marvin
+    # being the supervisor who actually runs that specific visit. This is
+    # judged per-visit, not per-case: KSADS1/KSADS2 share one supervisor
+    # (primary_var) and so share one modality decision, but KSADS3 has its
+    # own supervisor (secondary_var, the KSADS3 escape valve — soft rule
+    # 1) and is judged independently. It's entirely possible for KSADS1/2
+    # to be telehealth (primary is Marvin) while KSADS3 is in-person
+    # (reassigned away from Marvin), or the reverse. Med/Feedback are
+    # always MD-supervised, so they're forced in-person unconditionally,
+    # in every case — not just case_index==0 — with no exception ever.
+    for ci, case in enumerate(cases):
+        for vt in case["template"]:
+            if vt in ("Med", "Feedback"):
+                model.Add(modality_var[ci, vt] == 1)
+
+        if case["case_index"] != 0:
+            # The shadow-vs-lead exception only ever applies to a
+            # fellow's very first case — every other case is always
+            # in-person for KSADS visits too.
+            for vt in case["template"]:
+                if vt.startswith("KSADS"):
+                    model.Add(modality_var[ci, vt] == 1)
+            continue
+
+        is_primary_marvin = reified_eq(model, primary_var[ci], SUPERVISOR_INDEX["Marvin"],
+                                        f"marvin_primary_{ci}")
+        for vt in ("KSADS1", "KSADS2"):
+            model.Add(modality_var[ci, vt] == 0).OnlyEnforceIf(is_primary_marvin)       # telehealth
+            model.Add(modality_var[ci, vt] == 1).OnlyEnforceIf(is_primary_marvin.Not())  # default in-person
+
+        if ci in secondary_var:
+            is_secondary_marvin = reified_eq(model, secondary_var[ci], SUPERVISOR_INDEX["Marvin"],
+                                              f"marvin_secondary_{ci}")
+            model.Add(modality_var[ci, "KSADS3"] == 0).OnlyEnforceIf(is_secondary_marvin)       # telehealth
+            model.Add(modality_var[ci, "KSADS3"] == 1).OnlyEnforceIf(is_secondary_marvin.Not())  # default in-person
 
     # ======================================================================
     # Soft rules — four separately-named penalty lists so the summary can

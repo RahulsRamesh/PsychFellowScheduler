@@ -143,21 +143,26 @@ def verify_schedule(config: dict, result: dict) -> list:
             else:
                 sup_seen[key] = (case["fellow"], case["case_index"], v["type"])
 
-    # ---- Rule 10: case_index==0 with Marvin as primary supervisor ----
+    # ---- Rule 10 (updated 2026-09-27): modality defaults to in-person;
+    # the only telehealth exception is a visit in a case_index==0 case
+    # actually supervised by Marvin. Judged per-visit from the output's
+    # own reported `supervisor` field (not the case-level
+    # primary/secondary_supervisor bookkeeping), so KSADS3's escape-valve
+    # reassignment is judged independently of KSADS1/2, exactly matching
+    # solve.py's own per-visit modality constraints. Med/Feedback are
+    # always in-person, in every case, no exceptions.
     for case in cases:
-        if case["case_index"] != 0:
-            continue
-        if case.get("primary_supervisor") != "Marvin":
-            continue
         fname = case["fellow"]
         for v in case["visits"]:
-            if v["type"].startswith("KSADS") and v["modality"] != "telehealth":
+            if v["type"] in ("Med", "Feedback"):
+                expected = "in-person"
+            else:  # KSADS1/2/3
+                is_marvin_case0 = case["case_index"] == 0 and v.get("supervisor") == "Marvin"
+                expected = "telehealth" if is_marvin_case0 else "in-person"
+            if v["modality"] != expected:
                 violations.append(
-                    f"Rule 10: {fname} case 0 (Marvin) {v['type']} should be "
-                    f"telehealth, got {v['modality']}")
-            if v["type"] == "Med" and v["modality"] != "in-person":
-                violations.append(
-                    f"Rule 10: {fname} case 0 (Marvin) Med should be "
-                    f"in-person, got {v['modality']}")
+                    f"Rule 10: {fname} case {case['case_index']} {v['type']} "
+                    f"(supervisor {v.get('supervisor')}) should be {expected}, "
+                    f"got {v['modality']}")
 
     return violations

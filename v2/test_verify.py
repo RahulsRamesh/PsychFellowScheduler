@@ -149,3 +149,42 @@ def test_rule10_marvin_case0(clean_result, config):
                 if c["case_index"] == 0 and c["primary_supervisor"] == "Marvin")
     visit_of(case, "KSADS1")["modality"] = "in-person"
     assert_rule_flagged(verify_schedule(config, bad), 10)
+
+
+def test_rule10_default_inperson_outside_exception(clean_result, config):
+    # Modality defaults to in-person everywhere; case_index != 0 can never
+    # be telehealth regardless of who supervises it.
+    bad = copy.deepcopy(clean_result)
+    case = case_of(bad, "Fellow A", 2)  # tier-2 case, case_index != 0
+    visit_of(case, "KSADS1")["modality"] = "telehealth"
+    assert_rule_flagged(verify_schedule(config, bad), 10)
+
+
+def test_rule10_ksads3_judged_independently(clean_result, config):
+    # KSADS3 has its own supervisor (the escape valve) and must be judged
+    # on its own — telehealth only if ITS supervisor is Marvin, regardless
+    # of who supervises KSADS1/2 in the same case_index==0 case.
+    bad = copy.deepcopy(clean_result)
+    case = case_of(bad, "Fellow A", 0)  # case_index 0, always tier 1 (has KSADS3)
+    k1, k2, k3 = (visit_of(case, vt) for vt in ("KSADS1", "KSADS2", "KSADS3"))
+
+    k1["supervisor"] = "Walshaw"
+    k2["supervisor"] = "Walshaw"
+    k1["modality"] = "in-person"   # correct: non-Marvin supervisor -> in-person
+    k2["modality"] = "in-person"   # correct
+    k3["supervisor"] = "Marvin"
+    k3["modality"] = "in-person"   # wrong: Marvin + case_index 0 -> should be telehealth
+
+    violations = verify_schedule(config, bad)
+    assert_rule_flagged(violations, 10)
+    # Scope to Rule 10 specifically — reassigning KSADS1/2's supervisor
+    # to Walshaw for this test can incidentally land on one of her real
+    # vacation days (an unrelated Rule 3/8 violation), which isn't what
+    # this test is about.
+    rule10_violations = [v for v in violations if v.startswith("Rule 10:")]
+    assert any("KSADS3" in v for v in rule10_violations), (
+        f"expected a KSADS3-specific Rule 10 violation: {rule10_violations}")
+    assert not any("KSADS1" in v or "KSADS2" in v for v in rule10_violations), (
+        f"KSADS1/2 are correctly in-person (non-Marvin supervisor) and must not "
+        f"trigger Rule 10 just because KSADS3 in the same case involves Marvin: "
+        f"{rule10_violations}")
