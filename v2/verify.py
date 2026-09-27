@@ -97,12 +97,39 @@ def verify_schedule(config: dict, result: dict) -> list:
                                f"has no in-person appointment")
 
     # ---- Rule 6: a fellow's cases run strictly sequentially ----
+    # One exception: case B's KSADS1 may equal case A's Feedback date, but
+    # only when that Feedback is marked "late" (the coordinator's 2:15
+    # escape valve — Feedback's flexible time-of-day lets it real-world-
+    # follow a same-day noon KSADS1). Every other visit must be strictly
+    # after, no exceptions. Also independently cross-checks the "late"
+    # flag itself: it must be true exactly when the dates actually tie,
+    # never true without a real tie (which would be inconsistent solver
+    # bookkeeping) and never absent when a tie exists (which would be an
+    # ungated Rule 6 violation).
     for fname, fcases in by_fellow.items():
         fcases_sorted = sorted(fcases, key=lambda c: c["case_index"])
         for a, b in zip(fcases_sorted, fcases_sorted[1:]):
-            fb_date_a = parse(next(v for v in a["visits"] if v["type"] == "Feedback")["date"])
+            fb_visit_a = next(v for v in a["visits"] if v["type"] == "Feedback")
+            fb_date_a = parse(fb_visit_a["date"])
+            fb_late_a = bool(fb_visit_a.get("late"))
             for v in b["visits"]:
-                if parse(v["date"]) <= fb_date_a:
+                v_date = parse(v["date"])
+                if v["type"] == "KSADS1":
+                    if v_date < fb_date_a:
+                        violations.append(
+                            f"Rule 6: {fname} case {b['case_index']} KSADS1 ({v['date']}) "
+                            f"is before case {a['case_index']}'s Feedback ({fb_date_a})")
+                    elif v_date == fb_date_a and not fb_late_a:
+                        violations.append(
+                            f"Rule 6: {fname} case {b['case_index']} KSADS1 shares a date "
+                            f"with case {a['case_index']}'s Feedback ({fb_date_a}) but that "
+                            f"Feedback isn't marked late")
+                    elif v_date != fb_date_a and fb_late_a:
+                        violations.append(
+                            f"Rule 6: {fname} case {a['case_index']}'s Feedback is marked "
+                            f"late but case {b['case_index']}'s KSADS1 ({v['date']}) doesn't "
+                            f"actually share its date ({fb_date_a}) — inconsistent bookkeeping")
+                elif v_date <= fb_date_a:
                     violations.append(
                         f"Rule 6: {fname} case {b['case_index']} visit {v['type']} "
                         f"({v['date']}) is not after case {a['case_index']}'s "

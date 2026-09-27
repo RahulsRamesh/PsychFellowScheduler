@@ -110,6 +110,47 @@ def test_rule6_cases_sequential(clean_result, config):
     assert_rule_flagged(verify_schedule(config, bad), 6)
 
 
+def test_rule6_late_feedback_escape_valve_allowed(clean_result, config):
+    # A legitimate same-day tie (Feedback marked late) is NOT a violation —
+    # this is the coordinator's real-world escape valve, not a bug.
+    bad = copy.deepcopy(clean_result)
+    case0 = case_of(bad, "Fellow A", 0)
+    case1 = case_of(bad, "Fellow A", 1)
+    fb0 = visit_of(case0, "Feedback")
+    ksads1_1 = visit_of(case1, "KSADS1")
+    ksads1_1["date"] = fb0["date"]
+    fb0["late"] = True
+    assert verify_schedule(config, bad) == []
+
+
+def test_rule6_ksads1_tied_but_feedback_not_marked_late(clean_result, config):
+    # Same-day tie without the "late" flag is still a Rule 6 violation —
+    # the exception only exists when the escape valve was actually used.
+    bad = copy.deepcopy(clean_result)
+    case0 = case_of(bad, "Fellow A", 0)
+    case1 = case_of(bad, "Fellow A", 1)
+    fb0 = visit_of(case0, "Feedback")
+    ksads1_1 = visit_of(case1, "KSADS1")
+    ksads1_1["date"] = fb0["date"]
+    fb0["late"] = False
+    assert_rule_flagged(verify_schedule(config, bad), 6)
+
+
+def test_rule6_late_flag_without_actual_tie_is_inconsistent(clean_result, config):
+    # "late" claims the escape valve was used, but the dates don't
+    # actually match — inconsistent solver bookkeeping, not a real tie.
+    # Force the mismatch explicitly (don't assume the baseline solve
+    # didn't already legitimately tie this transition on its own).
+    bad = copy.deepcopy(clean_result)
+    case0 = case_of(bad, "Fellow A", 0)
+    case1 = case_of(bad, "Fellow A", 1)
+    fb0 = visit_of(case0, "Feedback")
+    ksads1_1 = visit_of(case1, "KSADS1")
+    fb0["late"] = True
+    ksads1_1["date"] = "2099-01-05"  # deliberately does not match fb0's date
+    assert_rule_flagged(verify_schedule(config, bad), 6)
+
+
 def test_rule7_fellow_double_booked(clean_result, config):
     bad = copy.deepcopy(clean_result)
     case0 = case_of(bad, "Fellow A", 2)

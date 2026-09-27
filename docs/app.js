@@ -427,14 +427,14 @@ const SOFT_RULE_LABELS = {
   "supervisor_variety (soft #2)": "Supervisor variety",
   "ksads3_mismatch (soft #1)": "KSADS3 supervisor mismatch",
   "med_position (soft #3)": "Med visit position",
-  "case_gap (soft #4)": "Gap between cases",
+  "case_gap (soft #4)": "Late Feedback escape valve",
 };
 
 const SOFT_RULE_TOOLTIPS = {
   "supervisor_variety (soft #2)": "How many full-time fellows failed to get at least one case with each of the 3 PhD supervisors across their 4 cases. Research fellows are excluded — structurally impossible with only 2 cases.",
   "ksads3_mismatch (soft #1)": "How many tier-1 cases had KSADS3 supervised by someone different from KSADS1/2's supervisor (the 'escape valve,' used to avoid a double-booking).",
   "med_position (soft #3)": "How many cases broke the preferred Med-visit timing: tier-1 cases shouldn't start with Med, tier-2 cases should.",
-  "case_gap (soft #4)": "How many times a fellow's next case started less than ~1 week after the previous case's Feedback appointment.",
+  "case_gap (soft #4)": "How many times the next case had to start on the SAME day as the previous case's Feedback, using the 'late Feedback' escape valve (Feedback pushed to 2:15 so it still follows that day's KSADS1 in real time). Every other transition is always naturally ≥7 days apart on its own.",
 };
 
 function supervisorLoadTooltip(name) {
@@ -484,7 +484,7 @@ function visitTable(visits, visitOrder) {
   table.innerHTML = `
     <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
     <tbody>
-      ${ordered.map((v) => `<tr><td>${v.type}</td><td>${v.date}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
+      ${ordered.map((v) => `<tr><td>${v.type}</td><td>${v.date}${v.late ? ' <span class="late-badge" title="Late Feedback escape valve: pushed to 2:15 so it still follows this day’s KSADS1 in real time">2:15pm</span>' : ""}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
     </tbody>
   `;
   return table;

@@ -178,3 +178,39 @@ def test_case_gap_details_shape_and_expected_mismatch(result):
         assert details == []
     else:
         assert len(details) > 0
+
+
+# ---- 4 (case_gap): "tight" now means exactly the late-Feedback escape
+# valve (Rule 6) was used — independently recompute each transition's
+# tie status directly from visit dates, not from any solver bool ----
+def test_case_gap_matches_late_feedback_escape_valve(result):
+    details = result["soft_violation_details"]["case_gap (soft #4)"]
+    flagged = {(e["fellow"], e["case_index"]) for e in details}
+
+    by_fellow = {}
+    for case in result["cases"]:
+        by_fellow.setdefault(case["fellow"], []).append(case)
+
+    for fellow, fcases in by_fellow.items():
+        fcases_sorted = sorted(fcases, key=lambda c: c["case_index"])
+        for a, b in zip(fcases_sorted, fcases_sorted[1:]):
+            fb_a = next(v for v in a["visits"] if v["type"] == "Feedback")
+            ksads1_b = next(v for v in b["visits"] if v["type"] == "KSADS1")
+            is_tied = fb_a["date"] == ksads1_b["date"]
+
+            # The "late" flag must agree with the actual dates, regardless
+            # of what soft_violation_details says.
+            assert bool(fb_a.get("late")) == is_tied, (
+                f"{fellow} case {a['case_index']}: Feedback 'late'={fb_a.get('late')} "
+                f"but actual tie status (Feedback {fb_a['date']} vs next KSADS1 "
+                f"{ksads1_b['date']}) is {is_tied}")
+
+            if is_tied:
+                assert (fellow, a["case_index"]) in flagged, (
+                    f"{fellow} case {a['case_index']}'s Feedback is genuinely tied "
+                    f"with case {b['case_index']}'s KSADS1 but is missing from "
+                    f"case_gap details")
+                assert (fellow, b["case_index"]) in flagged, (
+                    f"{fellow} case {b['case_index']}'s KSADS1 is genuinely tied "
+                    f"with case {a['case_index']}'s Feedback but is missing from "
+                    f"case_gap details")

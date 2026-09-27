@@ -179,14 +179,36 @@ def solve(config: dict, time_limit_s: int = 30):
     # EVERY visit in case N+1 (not just its first) must fall after case N's
     # Feedback — bounding only the first visit lets Med float outside its
     # case's window (this was a real bug in an earlier prototype).
+    #
+    # One coordinator-specified exception: case N+1's KSADS1 may land on
+    # the SAME calendar day as case N's Feedback — the "late Feedback"
+    # escape valve. In reality this works because Feedback's time-of-day
+    # is flexible (12:00/12:45 normally) and can be pushed to 2:15, so it
+    # still real-world-follows the noon KSADS1 even though the date
+    # matches. We don't model time-of-day at all otherwise; `late_feedback_var`
+    # is just a boolean marking whether this specific escape valve got
+    # used. This is safe to allow unconditionally (not gated behind a
+    # separate "permission" variable) because it's defined as an exact
+    # reified equality below, and rules 7/8 (fellow/supervisor
+    # double-booking) already exempt Feedback from same-day conflict
+    # checks against other visit types — so a same-day KSADS1/Feedback
+    # pair was never actually forbidden by anything else. No other visit
+    # type in case N+1 gets this relaxation — only KSADS1.
     by_fellow = {}
     for ci, case in enumerate(cases):
         by_fellow.setdefault(case["fellow"], []).append(ci)
+
+    late_feedback_var = {}  # case_id (the earlier case, "a") -> BoolVar
     for fellow, case_ids in by_fellow.items():
         case_ids_sorted = sorted(case_ids, key=lambda ci: cases[ci]["case_index"])
         for a, b in zip(case_ids_sorted, case_ids_sorted[1:]):
             for vt in cases[b]["template"]:
-                model.Add(date_var[b, vt] > date_var[a, "Feedback"])
+                if vt == "KSADS1":
+                    model.Add(date_var[b, vt] >= date_var[a, "Feedback"])
+                else:
+                    model.Add(date_var[b, vt] > date_var[a, "Feedback"])
+            late_feedback_var[a] = reified_eq(model, date_var[b, "KSADS1"], date_var[a, "Feedback"],
+                                               f"late_feedback_{a}")
 
     # ---- Rule 7: no fellow double-booked (non-Feedback) same date ----
     fellow_nonfb_slots = []  # (fellow, case_id, visit_type)
@@ -342,24 +364,26 @@ def solve(config: dict, time_limit_s: int = 30):
         penalty_med_position.append(violation)
         med_position_info.append((violation, case["fellow"], case["case_index"]))
 
-    # ---- Soft 4: ~1 week (7+ days) gap between a fellow's successive cases ----
-    # case_gap_info runs parallel to penalty_case_gap, recording which
-    # fellow and which pair of case_indexes (the case whose Feedback starts
-    # the gap, and the case whose first visit ends it) each `tight` bool
-    # belongs to.
+    # ---- Soft 4: a fellow's next case shouldn't need the "late Feedback"
+    # escape valve (Rule 6 above) — i.e., shouldn't have to start the very
+    # same day as the previous case's Feedback ----
+    # Every date is a Monday (Rule 1), and case N+1 must start on or after
+    # case N's Feedback (Rule 6) — so the real calendar gap between them is
+    # always either exactly 0 (a same-day tie, only possible via the late-
+    # Feedback escape valve) or at least 7 days (any two *different*
+    # Mondays are always >=7 real days apart, holidays only ever widen
+    # that, never shrink it). There's no way to land "1-6 days apart," so
+    # `late_feedback_var[a]` — already an exact reified equality — is both
+    # the complete definition of this rule's violation AND automatically
+    # correct regardless of how many holiday Mondays fall between the two
+    # dates; no separate day-counting is needed.
     penalty_case_gap = []
-    case_gap_info = []  # (tight_bool, fellow, case_index_a, case_index_b)
+    case_gap_info = []  # (late_bool, fellow, case_index_a, case_index_b)
     for fellow, case_ids in by_fellow.items():
         case_ids_sorted = sorted(case_ids, key=lambda ci: cases[ci]["case_index"])
         for a, b in zip(case_ids_sorted, case_ids_sorted[1:]):
-            first_vt_b = cases[b]["template"][0]
-            gap = model.NewIntVar(0, 400, f"gap_{a}_{b}")
-            model.Add(gap == date_var[b, first_vt_b] - date_var[a, "Feedback"])
-            tight = model.NewBoolVar(f"tight_{a}_{b}")
-            model.Add(gap < 7).OnlyEnforceIf(tight)
-            model.Add(gap >= 7).OnlyEnforceIf(tight.Not())
-            penalty_case_gap.append(tight)
-            case_gap_info.append((tight, fellow, cases[a]["case_index"], cases[b]["case_index"]))
+            penalty_case_gap.append(late_feedback_var[a])
+            case_gap_info.append((late_feedback_var[a], fellow, cases[a]["case_index"], cases[b]["case_index"]))
 
     # Supervisor-related soft rules (1, 2) weighted noticeably higher than
     # positional ones (3, 4) — supervisor continuity matters more to the
@@ -411,8 +435,8 @@ def solve(config: dict, time_limit_s: int = 30):
     # expected and correct; do not "fix" it into a spurious equality.
     case_gap_details = []
     _case_gap_seen = set()
-    for tight, fellow, case_index_a, case_index_b in case_gap_info:
-        if solver.Value(tight) == 1:
+    for late, fellow, case_index_a, case_index_b in case_gap_info:
+        if solver.Value(late) == 1:
             for case_index in (case_index_a, case_index_b):
                 key = (fellow, case_index)
                 if key not in _case_gap_seen:
@@ -446,8 +470,13 @@ def solve(config: dict, time_limit_s: int = 30):
                 sup = secondary_name
             else:  # KSADS1, KSADS2
                 sup = primary_name
+            # "late" only ever applies to Feedback (the 2:15 escape-valve
+            # slot, Rule 6) — always False elsewhere. A fellow's last case
+            # has no following case, so it has no entry in
+            # late_feedback_var at all; that's correctly just False too.
+            late = vt == "Feedback" and ci in late_feedback_var and bool(solver.Value(late_feedback_var[ci]))
             visits.append({"type": vt, "date": d.isoformat(), "modality": modality,
-                            "supervisor": sup})
+                            "supervisor": sup, "late": late})
         out_cases.append({
             "fellow": case["fellow"],
             "case_index": case["case_index"],
