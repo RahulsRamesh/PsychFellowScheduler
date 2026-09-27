@@ -380,9 +380,43 @@ button[type="submit"]:disabled {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 0.75rem 0.9rem;
+  position: relative;
+  cursor: pointer;
+}
+
+.stat-tile:hover {
+  border-color: var(--color-text-muted);
+}
+
+.stat-tile:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Active tile — same single-select ".active" idiom as the group toggle,
+   in amber so it visibly pairs with the schedule highlights below. */
+.stat-tile.active {
+  border-color: var(--color-warn);
+  background: var(--color-warn-bg);
+  box-shadow: 0 0 0 1px var(--color-warn);
+}
+
+.stat-tile .stat-info {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.5rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--color-text-muted);
+  cursor: help;
+}
+
+.stat-tile .stat-info:hover {
+  color: var(--color-text);
 }
 
 .stat-tile .stat-label {
+  padding-right: 1rem;
   font-size: 0.8rem;
   color: var(--color-text-muted);
   margin-bottom: 0.25rem;
@@ -445,6 +479,30 @@ table.visit-table td {
 
 table.visit-table tbody tr:nth-child(even) {
   background: #fafaf9;
+}
+
+/* Stat-tile click-to-highlight targets */
+.case-block.highlighted {
+  background: var(--color-warn-bg);
+  outline: 1px solid var(--color-warn);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.5rem;
+}
+
+.case-block.highlighted table.visit-table tbody tr:nth-child(even) {
+  background: transparent;
+}
+
+.fellow-label.highlighted {
+  background: var(--color-warn-bg);
+  color: var(--color-warn);
+  outline: 1px solid var(--color-warn);
+  border-radius: var(--radius);
+  padding: 0 0.3rem;
+}
+
+summary.fellow-label.highlighted {
+  width: fit-content;
 }
 
 @media print {
