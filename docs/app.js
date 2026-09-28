@@ -537,11 +537,11 @@ function renderSchedule(container, cases, groupBy, visitOrder) {
       details.open = true;
 
       const summary = document.createElement("summary");
-      summary.textContent = `Case ${caseIndex} — tier ${group[0].tier}`;
+      summary.textContent = `Case ${caseIndex + 1}`;
       details.appendChild(summary);
 
       group.forEach((c) => {
-        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — ${supervisorText(c)}`], visitOrder));
+        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — Supervisor: ${supervisorText(c)}`], visitOrder));
       });
 
       container.appendChild(details);
@@ -566,7 +566,7 @@ function renderSchedule(container, cases, groupBy, visitOrder) {
     fellowCases
       .sort((a, b) => a.case_index - b.case_index)
       .forEach((c) => {
-        details.appendChild(caseBlockFor(c, [`Case ${c.case_index} — tier ${c.tier} — ${supervisorText(c)}`], visitOrder));
+        details.appendChild(caseBlockFor(c, [`Case ${c.case_index + 1} — Supervisor: ${supervisorText(c)}`], visitOrder));
       });
 
     container.appendChild(details);
