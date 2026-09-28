@@ -14,6 +14,10 @@
 </header>
 
 <main>
+  <div id="data-tools" class="data-tools">
+    <button type="button" id="clear-data-btn">Clear data</button>
+  </div>
+
   <div id="dev-tools" class="dev-tools" hidden>
     <button type="button" id="load-sample-btn">Load sample data</button>
   </div>
@@ -73,11 +77,7 @@
     <fieldset>
       <legend>MD Supervisor</legend>
       <div class="supervisor-block">
-        <label>
-          Name
-          <input type="text" id="md-name" placeholder="e.g. Horstmann" required>
-        </label>
-        <small class="field-error" id="md-name-error"></small>
+        <h3>Horstmann</h3>
         <div class="date-range-list" id="md-vacations-list"></div>
         <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target="#md-vacations-list">+ Add vacation</button>
       </div>

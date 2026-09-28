@@ -7,6 +7,13 @@
 // static blocks in index.html both need updating together.
 const PHD_NAMES = ["Walshaw", "Ellis", "Marvin"];
 
+// The MD supervisor's name is likewise hardcoded (never read from an
+// input) — the MD Supervisor fieldset in index.html is a static heading,
+// not an editable field. The backend still finds the MD supervisor
+// dynamically by role: "MD", not by this name, but the frontend must
+// send this exact string.
+const MD_NAME = "Horstmann";
+
 const form = document.getElementById("schedule-form");
 const formErrorsBox = document.getElementById("form-errors");
 const formErrorsList = document.getElementById("form-errors-list");
@@ -78,6 +85,18 @@ function addFilledDateRangeRow(container, start, end) {
   container.appendChild(node);
 }
 
+// Shared by loadSampleData() and the "Clear data" button — both replace
+// the form's contents wholesale and need to wipe any stale
+// validation/result state left over from a prior attempt.
+function resetValidationAndResultState() {
+  document.querySelectorAll(".invalid").forEach((el) => el.classList.remove("invalid"));
+  document.querySelectorAll(".field-error").forEach((el) => { el.textContent = ""; });
+  formErrorsBox.hidden = true;
+  hideError();
+  resultsEl.hidden = true;
+  resultsEl.innerHTML = "";
+}
+
 function loadSampleData() {
   document.getElementById("clinic_start").value = SAMPLE_DATA.clinic_start;
   document.getElementById("clinic_end").value = SAMPLE_DATA.clinic_end;
@@ -92,7 +111,6 @@ function loadSampleData() {
     (SAMPLE_DATA.supervisor_vacations[name] || []).forEach(([s, e]) => addFilledDateRangeRow(container, s, e));
   });
 
-  document.getElementById("md-name").value = SAMPLE_DATA.md.name;
   const mdVacationsEl = document.getElementById("md-vacations-list");
   mdVacationsEl.innerHTML = "";
   SAMPLE_DATA.md.vacations.forEach(([s, e]) => addFilledDateRangeRow(mdVacationsEl, s, e));
@@ -107,12 +125,7 @@ function loadSampleData() {
     f.vacations.forEach(([s, e]) => addFilledDateRangeRow(vacationsEl, s, e));
   });
 
-  // Reset any stale validation/result state left over from a prior attempt.
-  document.querySelectorAll(".invalid").forEach((el) => el.classList.remove("invalid"));
-  document.querySelectorAll(".field-error").forEach((el) => { el.textContent = ""; });
-  formErrorsBox.hidden = true;
-  hideError();
-  resultsEl.hidden = true;
+  resetValidationAndResultState();
 }
 
 if (typeof SHOW_LOAD_SAMPLE_BUTTON !== "undefined" && SHOW_LOAD_SAMPLE_BUTTON) {
@@ -121,17 +134,47 @@ if (typeof SHOW_LOAD_SAMPLE_BUTTON !== "undefined" && SHOW_LOAD_SAMPLE_BUTTON) {
 }
 
 // ---------------------------------------------------------------------
+// "Clear data" — a real, always-visible coordinator-facing feature (NOT
+// gated on SHOW_LOAD_SAMPLE_BUTTON, unlike "Load sample data" above).
+// Resets the whole form back to its exact initial page-load state.
+// ---------------------------------------------------------------------
+
+function clearData() {
+  const confirmed = window.confirm(
+    "You are clearing the data and generated schedule. This cannot be reversed so download schedule if necessary before confirming."
+  );
+  if (!confirmed) return;
+
+  document.getElementById("clinic_start").value = "";
+  document.getElementById("clinic_end").value = "";
+
+  document.getElementById("holidays-list").innerHTML = "";
+
+  PHD_NAMES.forEach((name) => {
+    document.querySelector(`[data-supervisor="${name}"]`).innerHTML = "";
+  });
+
+  document.getElementById("md-vacations-list").innerHTML = "";
+
+  fellowsList.innerHTML = "";
+  addFellowRow();
+
+  resetValidationAndResultState();
+}
+
+document.getElementById("clear-data-btn").addEventListener("click", clearData);
+
+// ---------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------
 
-// clinic_start/clinic_end share one error element, and md-name's error
-// element is a sibling outside its <label> — neither is reachable via a
-// generic closest(".row") lookup the way repeatable row fields are, so
-// they're mapped explicitly rather than guessed from DOM structure.
+// clinic_start/clinic_end share one error element, which isn't
+// reachable via a generic closest(".row") lookup the way repeatable row
+// fields are, so it's mapped explicitly rather than guessed from DOM
+// structure.
 const EXPLICIT_ERROR_TARGETS = {
   clinic_start: "clinic-dates-error",
   clinic_end: "clinic-dates-error",
-  "md-name": "md-name-error",
 };
 
 function errorElementFor(el) {
@@ -210,11 +253,6 @@ function validate() {
     validateDateRangeRows(document.querySelector(`[data-supervisor="${name}"]`), errors);
   });
 
-  const mdNameEl = document.getElementById("md-name");
-  if (!mdNameEl.value.trim()) {
-    setFieldError(mdNameEl, "MD supervisor name is required.");
-    errors.push({ message: "MD supervisor name is required.", element: mdNameEl });
-  }
   validateDateRangeRows(document.getElementById("md-vacations-list"), errors);
 
   const fellowRows = [...fellowsList.querySelectorAll(".fellow-row")];
@@ -296,7 +334,7 @@ function assembleConfig() {
     vacations: readDateRanges(document.querySelector(`[data-supervisor="${name}"]`)),
   }));
   supervisors.push({
-    name: document.getElementById("md-name").value.trim(),
+    name: MD_NAME,
     role: "MD",
     vacations: readDateRanges(document.getElementById("md-vacations-list")),
   });
