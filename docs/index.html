@@ -44,7 +44,7 @@
       <legend>Holidays</legend>
       <p class="hint">Date ranges when no appointments can be scheduled (only the Mondays within a range matter).</p>
       <div class="date-range-list" id="holidays-list"></div>
-      <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target="#holidays-list">+ Add holiday</button>
+      <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-holiday-row" data-target="#holidays-list">+ Add holiday</button>
     </fieldset>
 
     <fieldset>
@@ -113,6 +113,23 @@
     <input type="date" class="start" required>
     <span class="to">to</span>
     <input type="date" class="end" required>
+    <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove date range">&times;</button>
+    <small class="field-error"></small>
+  </div>
+</template>
+
+<!-- Holiday rows only: same shape as tpl-daterange-row plus a purely
+     cosmetic notes field. Never read by readDateRanges(), which only
+     looks at .start/.end, so notes text never reaches the submitted
+     config. Kept as its own template (rather than adding to
+     tpl-daterange-row) since that shared template is also cloned for
+     every supervisor's and fellow's vacation lists. -->
+<template id="tpl-holiday-row">
+  <div class="row date-range-row">
+    <input type="date" class="start" required>
+    <span class="to">to</span>
+    <input type="date" class="end" required>
+    <input type="text" class="notes" placeholder="e.g. Labor Day">
     <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove date range">&times;</button>
     <small class="field-error"></small>
   </div>
