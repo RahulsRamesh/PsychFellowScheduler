@@ -85,6 +85,18 @@ function addFilledDateRangeRow(container, start, end) {
   container.appendChild(node);
 }
 
+// Holidays use their own template (tpl-holiday-row), which additionally
+// carries a cosmetic .notes field — so sample-data-loaded holiday rows
+// look consistent with manually-added ones, not a mix of two shapes.
+function addFilledHolidayRow(container, start, end, notes) {
+  const tpl = document.getElementById("tpl-holiday-row");
+  const node = tpl.content.cloneNode(true);
+  node.querySelector(".start").value = start;
+  node.querySelector(".end").value = end;
+  if (notes) node.querySelector(".notes").value = notes;
+  container.appendChild(node);
+}
+
 // Shared by loadSampleData() and the "Clear data" button — both replace
 // the form's contents wholesale and need to wipe any stale
 // validation/result state left over from a prior attempt.
@@ -103,7 +115,7 @@ function loadSampleData() {
 
   const holidaysListEl = document.getElementById("holidays-list");
   holidaysListEl.innerHTML = "";
-  SAMPLE_DATA.holidays.forEach(([s, e]) => addFilledDateRangeRow(holidaysListEl, s, e));
+  SAMPLE_DATA.holidays.forEach(([s, e, notes]) => addFilledHolidayRow(holidaysListEl, s, e, notes));
 
   PHD_NAMES.forEach((name) => {
     const container = document.querySelector(`[data-supervisor="${name}"]`);

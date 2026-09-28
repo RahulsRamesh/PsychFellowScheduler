@@ -5,9 +5,10 @@
 const SAMPLE_DATA = {
   clinic_start: "2026-07-20",
   clinic_end: "2026-12-21",
+  // Third element (optional) is the cosmetic notes text for that row.
   holidays: [
-    ["2026-09-07", "2026-09-07"],
-    ["2026-10-26", "2026-10-31"],
+    ["2026-09-07", "2026-09-07", "Labor Day"],
+    ["2026-10-26", "2026-10-31", "AACAP conference"],
   ],
   supervisor_vacations: {
     Walshaw: [

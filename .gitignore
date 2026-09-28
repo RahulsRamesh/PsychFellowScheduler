@@ -9,3 +9,4 @@ __pycache__/
 # Reference/source material — not part of the shipped engine or API
 # (original docs, v1 prototype, task spec, real fellow/schedule data)
 reference_material/
+.claude/
