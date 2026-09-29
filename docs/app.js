@@ -622,6 +622,11 @@ form.addEventListener("submit", (e) => {
 const MODIFIED_FEEDBACK_KEY = "modified_feedback_time";
 const MERGED_INTO_MODIFIED_FEEDBACK = ["case_gap (soft #4)", "feedback_215 (soft #5)"];
 
+// Still penalized by the solver, just not shown as a tile: a 3-Feedback
+// day's 12:45 and 2:15 Feedbacks already show up in the Modified Feedback
+// time tile.
+const HIDDEN_SOFT_RULES = ["feedback_triple (soft #6)"];
+
 // Results saved before visits carried a `time` field only had a `late`
 // flag (the 2:15 case-overlap Feedback) — fall back to it for those.
 function isFeedbackPushedLater(v) {
@@ -640,7 +645,7 @@ function softTiles(result) {
   Object.entries(result.soft_violations).forEach(([key, value]) => {
     if (key === MERGED_INTO_MODIFIED_FEEDBACK[0]) {
       tiles.push({ key: MODIFIED_FEEDBACK_KEY, value: pushed.length, entries: pushed });
-    } else if (!MERGED_INTO_MODIFIED_FEEDBACK.includes(key)) {
+    } else if (!MERGED_INTO_MODIFIED_FEEDBACK.includes(key) && !HIDDEN_SOFT_RULES.includes(key)) {
       tiles.push({ key, value, entries: details[key] || [] });
     }
   });
@@ -652,7 +657,6 @@ const SOFT_RULE_LABELS = {
   "ksads3_mismatch (soft #1)": "KSADS3 supervisor mismatch",
   "med_position (soft #3)": "Med visit position",
   [MODIFIED_FEEDBACK_KEY]: "Modified Feedback time",
-  "feedback_triple (soft #6)": "Triple Feedback days",
 };
 
 const SOFT_RULE_TOOLTIPS = {
@@ -660,7 +664,6 @@ const SOFT_RULE_TOOLTIPS = {
   "ksads3_mismatch (soft #1)": "Measures how many instances KSADS3 is supervised by someone different than the KSADS1/2 supervisor.",
   "med_position (soft #3)": "Measures how many cases broke the preferred Med-visit timing: cases 1/2 shouldn't start with Med, cases 3/4 should.",
   [MODIFIED_FEEDBACK_KEY]: "Measures how many Feedbacks were pushed to a later time to accommodate same-day appointments.",
-  "feedback_triple (soft #6)": "Measures how many days Dr. Horstmann has 3 Feedbacks (12pm, 12:45pm, 2:15pm).",
 };
 
 function supervisorLoadTooltip(name) {
