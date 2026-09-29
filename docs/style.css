@@ -253,7 +253,11 @@ select.invalid {
 }
 
 .fellow-row-header .fellow-name {
-  flex: 0 1 9rem;
+  /* Halfway between the original (flex: 1 1 12rem) and the first pass at
+     shrinking it (flex: 0 1 9rem, which turned out too small): basis
+     10.5rem (midpoint of 12/9), grow 0.5 (midpoint of 1/0 — some, not
+     full, stretch into leftover row space). */
+  flex: 0.5 1 10.5rem;
   margin-right: 0.75rem;
 }
 
