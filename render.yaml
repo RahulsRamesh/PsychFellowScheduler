@@ -13,3 +13,7 @@ services:
         value: "https://rahulsramesh.github.io"
       - key: API_KEY
         sync: false
+      # CP-SAT parallel workers (see v2/solve.py). The free plan has only a
+      # fraction of a CPU, so fewer workers finish faster here.
+      - key: SOLVER_WORKERS
+        value: "4"

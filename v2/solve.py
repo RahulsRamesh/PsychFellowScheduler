@@ -15,6 +15,7 @@ than break them). Soft rules 1-6 are penalized in the objective.
 """
 
 import datetime
+import os
 
 from ortools.sat.python import cp_model
 
@@ -491,7 +492,12 @@ def solve(config: dict, time_limit_s: int = 45):
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_s
-    solver.parameters.num_search_workers = 8
+    # Parallel search workers. Defaults to 8 (fine on a multi-core
+    # machine); the deployed API overrides it via SOLVER_WORKERS in
+    # render.yaml, since on a fractional-CPU host every extra worker just
+    # competes for the same CPU slice and can push the solve past the time
+    # limit (FEASIBLE instead of OPTIMAL).
+    solver.parameters.num_search_workers = int(os.environ.get("SOLVER_WORKERS", 8))
     status = solver.Solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
