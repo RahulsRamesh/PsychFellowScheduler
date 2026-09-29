@@ -615,12 +615,43 @@ form.addEventListener("submit", (e) => {
 // Results rendering
 // ---------------------------------------------------------------------
 
+// The solver scores case overlap (soft #4) and 2:15 Feedback (soft #5)
+// separately, but both just mean "a Feedback got pushed later than noon",
+// so they're shown as one display-only tile whose count is every Feedback
+// with a start time after 12:00 (2:15, and 12:45 on a 3-Feedback day).
+const MODIFIED_FEEDBACK_KEY = "modified_feedback_time";
+const MERGED_INTO_MODIFIED_FEEDBACK = ["case_gap (soft #4)", "feedback_215 (soft #5)"];
+
+// Results saved before visits carried a `time` field only had a `late`
+// flag (the 2:15 case-overlap Feedback) — fall back to it for those.
+function isFeedbackPushedLater(v) {
+  return v.type === "Feedback" && (v.time ? v.time !== "12:00" : Boolean(v.late));
+}
+
+// [{ key, value, entries }] in the solver's order, with #4/#5 replaced by
+// the merged tile at #4's position. `entries` is what click-to-highlight
+// targets (same shape as soft_violation_details).
+function softTiles(result) {
+  const details = result.soft_violation_details || {};
+  const pushed = result.cases
+    .filter((c) => c.visits.some(isFeedbackPushedLater))
+    .map((c) => ({ fellow: c.fellow, case_index: c.case_index }));
+  const tiles = [];
+  Object.entries(result.soft_violations).forEach(([key, value]) => {
+    if (key === MERGED_INTO_MODIFIED_FEEDBACK[0]) {
+      tiles.push({ key: MODIFIED_FEEDBACK_KEY, value: pushed.length, entries: pushed });
+    } else if (!MERGED_INTO_MODIFIED_FEEDBACK.includes(key)) {
+      tiles.push({ key, value, entries: details[key] || [] });
+    }
+  });
+  return tiles;
+}
+
 const SOFT_RULE_LABELS = {
   "supervisor_variety (soft #2)": "Supervisor case distribution",
   "ksads3_mismatch (soft #1)": "KSADS3 supervisor mismatch",
   "med_position (soft #3)": "Med visit position",
-  "case_gap (soft #4)": "Overlap of cases",
-  "feedback_215 (soft #5)": "2:15pm Feedback",
+  [MODIFIED_FEEDBACK_KEY]: "Modified Feedback time",
   "feedback_triple (soft #6)": "Triple Feedback days",
 };
 
@@ -628,9 +659,8 @@ const SOFT_RULE_TOOLTIPS = {
   "supervisor_variety (soft #2)": "Measures how many full-time fellows failed to get at least one case with each of the 3 PhD supervisors across their 4 cases. Research fellows are excluded since they only have 2 cases.",
   "ksads3_mismatch (soft #1)": "Measures how many instances KSADS3 is supervised by someone different than the KSADS1/2 supervisor.",
   "med_position (soft #3)": "Measures how many cases broke the preferred Med-visit timing: cases 1/2 shouldn't start with Med, cases 3/4 should.",
-  "case_gap (soft #4)": "Measures how many times cases overlap and the next case starts on the same day as the previous case's Feedback.",
-  "feedback_215 (soft #5)": "Measures how many Feedbacks were pushed to 2:15pm because Dr. Horstmann already has a Med visit or another Feedback that day (case overlaps are counted separately above).",
-  "feedback_triple (soft #6)": "Measures how many days Dr. Horstmann has 3 Feedbacks (12pm, 12:45pm, 2:15pm). Last resort — weighted most heavily of all preferences.",
+  [MODIFIED_FEEDBACK_KEY]: "Measures how many Feedbacks were pushed to a later time to accommodate same-day appointments.",
+  "feedback_triple (soft #6)": "Measures how many days Dr. Horstmann has 3 Feedbacks (12pm, 12:45pm, 2:15pm).",
 };
 
 function supervisorLoadTooltip(name) {
@@ -676,7 +706,7 @@ const MODALITY_LABELS = { "in-person": "In-person", "telehealth": "Telehealth" }
 // nothing. Only Feedback can ever start at 12:45 or 2:15 (see solve.py
 // Rule 11).
 const TIME_BADGES = {
-  "12:45": { text: "12:45pm", title: "Feedback is moved to 12:45pm because Dr. Horstmann has 3 Feedbacks that day." },
+  "12:45": { text: "12:45pm", title: "Appointment is moved to 12:45pm to accommodate multiple same-day appointments." },
   "14:15": { text: "2:15pm", title: "Appointment is pushed back to accommodate a same day appointment." },
 };
 
@@ -819,10 +849,7 @@ function renderResults(result, hardRuleViolations) {
   let activeTile = null;
   let activeTarget = null;
   const caseKey = (fellow, caseIndex) => `${fellow}\u0000${caseIndex}`;
-  const softDetails = result.soft_violation_details || {};
-
-  function targetForSoftRule(key) {
-    const entries = softDetails[key] || [];
+  function targetForSoftRule(key, entries) {
     if (key.startsWith("supervisor_variety")) {
       return { fellowNames: new Set(entries) };
     }
@@ -889,14 +916,14 @@ function renderResults(result, hardRuleViolations) {
   softGridLabel.textContent = "Soft preference scores (lower is better but a schedule can still be fully valid with some non-zero.)";
   resultsEl.appendChild(softGridLabel);
 
-  const softValues = Object.values(result.soft_violations);
-  const softMax = Math.max(1, ...softValues);
+  const tiles = softTiles(result);
+  const softMax = Math.max(1, ...tiles.map((t) => t.value));
   const softGrid = document.createElement("div");
   softGrid.className = "stat-grid";
-  Object.entries(result.soft_violations).forEach(([key, value]) => {
+  tiles.forEach(({ key, value, entries }) => {
     const tile = statTile(SOFT_RULE_LABELS[key] || key, value, softMax, SOFT_RULE_TOOLTIPS[key]);
     tile.dataset.tile = key;
-    softGrid.appendChild(wireTile(tile, () => targetForSoftRule(key)));
+    softGrid.appendChild(wireTile(tile, () => targetForSoftRule(key, entries)));
   });
   resultsEl.appendChild(softGrid);
 
