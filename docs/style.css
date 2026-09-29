@@ -126,6 +126,10 @@ label {
   font-weight: 500;
 }
 
+.required-marker {
+  color: var(--color-error);
+}
+
 input[type="date"],
 input[type="text"],
 select {

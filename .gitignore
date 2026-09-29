@@ -6,7 +6,8 @@ __pycache__/
 *.egg-info/
 .env
 
-# Reference/source material — not part of the shipped engine or API
-# (original docs, v1 prototype, task spec, real fellow/schedule data)
+# Reference/source material
 reference_material/
 .claude/
+text_review.md
+

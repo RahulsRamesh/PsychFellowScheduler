@@ -5,14 +5,32 @@
 // v2/helpers.py exactly, since Rule 10 is tied to the specific name
 // "Marvin". If the backend's roster ever changes, this list and the
 // static blocks in index.html both need updating together.
+//
+// These short names are what's actually sent to/received from the API —
+// never change them to full names, or every request will fail the
+// backend's supervisor-roster check. PHD_DISPLAY_NAMES below is a
+// display-only layer: use phdDisplayName() anywhere a supervisor name is
+// shown to the coordinator, and keep using the raw short name for
+// anything sent to the API or matched against API responses.
 const PHD_NAMES = ["Walshaw", "Ellis", "Marvin"];
+
+const PHD_DISPLAY_NAMES = {
+  Walshaw: "Patty Walshaw",
+  Ellis: "Alissa Ellis",
+  Marvin: "Sarah Marvin",
+};
+
+function phdDisplayName(name) {
+  return PHD_DISPLAY_NAMES[name] || name;
+}
 
 // The MD supervisor's name is likewise hardcoded (never read from an
 // input) — the MD Supervisor fieldset in index.html is a static heading,
-// not an editable field. The backend still finds the MD supervisor
-// dynamically by role: "MD", not by this name, but the frontend must
-// send this exact string.
-const MD_NAME = "Horstmann";
+// not an editable field. Unlike the PhD names above, this one IS safe to
+// show in full everywhere, including what's sent to the API: the backend
+// finds the MD supervisor dynamically by role: "MD", never by matching
+// this literal name against anything.
+const MD_NAME = "Elizabeth Horstmann";
 
 const form = document.getElementById("schedule-form");
 const formErrorsBox = document.getElementById("form-errors");
@@ -153,7 +171,7 @@ if (typeof SHOW_LOAD_SAMPLE_BUTTON !== "undefined" && SHOW_LOAD_SAMPLE_BUTTON) {
 
 function clearData() {
   const confirmed = window.confirm(
-    "You are clearing the data and generated schedule. This cannot be reversed so download schedule if necessary before confirming."
+    "You are clearing the form fields and the generated schedule. This cannot be reversed so please download the schedule if necessary before confirming."
   );
   if (!confirmed) return;
 
@@ -299,7 +317,7 @@ function validate() {
     const mondays = mondaysBetween(clinicStartEl.value, clinicEndEl.value);
     const hasFreeMonday = mondays.some((d) => !dateInRanges(d, holidayRanges));
     if (!hasFreeMonday) {
-      errors.push({ message: "Every Monday in the clinic window falls on a holiday — no appointments could ever be scheduled.", element: clinicEndEl });
+      errors.push({ message: "Every Monday in the clinic window falls on a holiday — no appointments can be scheduled.", element: clinicEndEl });
     }
   }
 
@@ -474,21 +492,21 @@ form.addEventListener("submit", (e) => {
 // ---------------------------------------------------------------------
 
 const SOFT_RULE_LABELS = {
-  "supervisor_variety (soft #2)": "Supervisor variety",
+  "supervisor_variety (soft #2)": "Supervisor case distribution",
   "ksads3_mismatch (soft #1)": "KSADS3 supervisor mismatch",
   "med_position (soft #3)": "Med visit position",
-  "case_gap (soft #4)": "Late Feedback escape valve",
+  "case_gap (soft #4)": "Overlap of cases",
 };
 
 const SOFT_RULE_TOOLTIPS = {
-  "supervisor_variety (soft #2)": "How many full-time fellows failed to get at least one case with each of the 3 PhD supervisors across their 4 cases. Research fellows are excluded — structurally impossible with only 2 cases.",
-  "ksads3_mismatch (soft #1)": "How many tier-1 cases had KSADS3 supervised by someone different from KSADS1/2's supervisor (the 'escape valve,' used to avoid a double-booking).",
-  "med_position (soft #3)": "How many cases broke the preferred Med-visit timing: tier-1 cases shouldn't start with Med, tier-2 cases should.",
-  "case_gap (soft #4)": "How many times the next case had to start on the SAME day as the previous case's Feedback, using the 'late Feedback' escape valve (Feedback pushed to 2:15 so it still follows that day's KSADS1 in real time). Every other transition is always naturally ≥7 days apart on its own.",
+  "supervisor_variety (soft #2)": "Measures how many full-time fellows failed to get at least one case with each of the 3 PhD supervisors across their 4 cases. Research fellows are excluded since they only have 2 cases.",
+  "ksads3_mismatch (soft #1)": "Measures how many instances KSADS3 is supervised by someone different than the KSADS1/2 supervisor.",
+  "med_position (soft #3)": "Measures how many cases broke the preferred Med-visit timing: cases 1/2 shouldn't start with Med, cases 3/4 should.",
+  "case_gap (soft #4)": "Measures how many times cases overlap and the next case starts on the same day as the previous case's Feedback.",
 };
 
 function supervisorLoadTooltip(name) {
-  return `Number of cases where ${name} is the primary KSADS1/2 supervisor, across the whole schedule — a sanity check for balanced workload.`;
+  return `Number of cases where ${phdDisplayName(name)} is the primary KSADS1/2 supervisor, across the whole schedule — optimized for a balanced workload.`;
 }
 
 // Tiles are clickable (see renderResults) — a div with role="button"
@@ -516,9 +534,15 @@ function statTile(label, value, max, tooltip) {
 
 function supervisorText(c) {
   return c.secondary_supervisor && c.secondary_supervisor !== c.primary_supervisor
-    ? `${c.primary_supervisor} (KSADS3: ${c.secondary_supervisor})`
-    : c.primary_supervisor;
+    ? `${phdDisplayName(c.primary_supervisor)} (KSADS3: ${phdDisplayName(c.secondary_supervisor)})`
+    : phdDisplayName(c.primary_supervisor);
 }
+
+// Both maps below are display-only — the raw values ("Med", "in-person",
+// "telehealth") are what the backend actually sends/expects, and stay
+// unchanged everywhere except this one rendering step.
+const VISIT_TYPE_LABELS = { Med: "Med Visit" };
+const MODALITY_LABELS = { "in-person": "In-person", "telehealth": "Telehealth" };
 
 // visitOrder "standard" keeps the template order (KSADS1, KSADS2, KSADS3,
 // Med, Feedback); "date" sorts chronologically instead. Dates are ISO
@@ -534,7 +558,7 @@ function visitTable(visits, visitOrder) {
   table.innerHTML = `
     <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
     <tbody>
-      ${ordered.map((v) => `<tr><td>${v.type}</td><td>${v.date}${v.late ? ' <span class="late-badge" title="Late Feedback escape valve: pushed to 2:15 so it still follows this day’s KSADS1 in real time">2:15pm</span>' : ""}</td><td>${v.modality}</td><td>${v.supervisor}</td></tr>`).join("")}
+      ${ordered.map((v) => `<tr><td>${VISIT_TYPE_LABELS[v.type] || v.type}</td><td>${v.date}${v.late ? ' <span class="late-badge" title="Appointment is pushed back to accommodate a same day appointment.">2:15pm</span>' : ""}</td><td>${MODALITY_LABELS[v.modality] || v.modality}</td><td>${phdDisplayName(v.supervisor)}</td></tr>`).join("")}
     </tbody>
   `;
   return table;
@@ -628,7 +652,7 @@ function renderResults(result, hardRuleViolations) {
   resultsEl.hidden = false;
 
   const statusClass = result.status === "OPTIMAL" ? "optimal" : "feasible";
-  const statusLabel = result.status === "OPTIMAL" ? "Optimal schedule found" : "Feasible schedule found (not proven optimal)";
+  const statusLabel = result.status === "OPTIMAL" ? "Optimal schedule found" : "Feasible schedule found (close to optimal - adjusting dates may allow for a more optimal schedule)";
   const statusBadge = document.createElement("span");
   statusBadge.className = `status-badge ${statusClass}`;
   statusBadge.textContent = statusLabel;
@@ -640,7 +664,7 @@ function renderResults(result, hardRuleViolations) {
     verifyLine.textContent = "✓ All hard scheduling rules verified.";
   } else {
     verifyLine.className = "verify-line bad";
-    verifyLine.innerHTML = "This should not happen — please report this:<br>" +
+    verifyLine.innerHTML = "If you are seeing this, please report it to Rahul:<br>" +
       hardRuleViolations.map((v) => `• ${v}`).join("<br>");
   }
   resultsEl.appendChild(verifyLine);
@@ -735,7 +759,10 @@ function renderResults(result, hardRuleViolations) {
   const loadGrid = document.createElement("div");
   loadGrid.className = "stat-grid";
   Object.entries(result.supervisor_case_load).forEach(([name, count]) => {
-    const tile = statTile(name, count, loadMax, supervisorLoadTooltip(name));
+    // name stays the raw short form for matching (dataset.tile,
+    // targetForSupervisor) — only the visible label/tooltip use the full
+    // display name.
+    const tile = statTile(phdDisplayName(name), count, loadMax, supervisorLoadTooltip(name));
     tile.dataset.tile = name;
     loadGrid.appendChild(wireTile(tile, () => targetForSupervisor(name)));
   });

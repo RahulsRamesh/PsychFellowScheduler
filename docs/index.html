@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Psych Fellow Scheduling</title>
+<title>Psych Fellow Scheduler</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header>
-  <h1>Psych Fellow Scheduling</h1>
-  <p class="subtitle">Build a 6-month fellow rotation schedule from clinic dates, holidays, and vacations.</p>
+  <h1>Psych Fellow Scheduler</h1>
+  <p class="subtitle">Generates an optimal fellow schedule based on a set of hard and soft rules. It takes into consideration clinic dates, holidays, and vacations. The rules and supervisors are hard coded, so for any changes to those please reach out to Rahul.</p>
 </header>
 
 <main>
@@ -25,19 +25,19 @@
   <form id="schedule-form" novalidate>
 
     <div id="form-errors" class="error-banner" hidden>
-      <strong>Please fix the following before generating a schedule:</strong>
+      <strong>Please fix the following before a schedule can be generated:</strong>
       <ul id="form-errors-list"></ul>
     </div>
 
     <fieldset>
-      <legend>Clinic dates</legend>
+      <legend>Clinic Dates</legend>
       <div class="field-row">
         <label>
-          Start date
+          Start date <span class="required-marker" aria-hidden="true">*</span>
           <input type="date" id="clinic_start" required>
         </label>
         <label>
-          End date
+          End date <span class="required-marker" aria-hidden="true">*</span>
           <input type="date" id="clinic_end" required>
         </label>
       </div>
@@ -46,29 +46,35 @@
 
     <fieldset>
       <legend>Holidays</legend>
-      <p class="hint">Date ranges when no appointments can be scheduled (only the Mondays within a range matter).</p>
+      <p class="hint">Date ranges when no appointments should be scheduled.</p>
       <div class="date-range-list" id="holidays-list"></div>
       <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-holiday-row" data-target="#holidays-list">+ Add holiday</button>
     </fieldset>
 
     <fieldset>
+      <legend>Fellows</legend>
+      <div id="fellows-list"></div>
+      <button type="button" class="add-btn" data-action="add-fellow">+ Add fellow</button>
+    </fieldset>
+
+    <fieldset>
       <legend>PhD Supervisors</legend>
-      <p class="hint">Supervisor names are fixed by the scheduling rules and can't be changed here.</p>
+      <p class="hint">Supervisor names are hard coded and can't be changed here.</p>
 
       <div class="supervisor-block">
-        <h3>Walshaw</h3>
+        <h3>Patty Walshaw</h3>
         <div class="date-range-list" data-supervisor="Walshaw"></div>
         <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target='[data-supervisor="Walshaw"]'>+ Add vacation</button>
       </div>
 
       <div class="supervisor-block">
-        <h3>Ellis</h3>
+        <h3>Alissa Ellis</h3>
         <div class="date-range-list" data-supervisor="Ellis"></div>
         <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target='[data-supervisor="Ellis"]'>+ Add vacation</button>
       </div>
 
       <div class="supervisor-block">
-        <h3>Marvin</h3>
+        <h3>Sarah Marvin</h3>
         <div class="date-range-list" data-supervisor="Marvin"></div>
         <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target='[data-supervisor="Marvin"]'>+ Add vacation</button>
       </div>
@@ -77,16 +83,10 @@
     <fieldset>
       <legend>MD Supervisor</legend>
       <div class="supervisor-block">
-        <h3>Horstmann</h3>
+        <h3>Elizabeth Horstmann</h3>
         <div class="date-range-list" id="md-vacations-list"></div>
         <button type="button" class="add-btn" data-action="add-row" data-template="#tpl-daterange-row" data-target="#md-vacations-list">+ Add vacation</button>
       </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Fellows</legend>
-      <div id="fellows-list"></div>
-      <button type="button" class="add-btn" data-action="add-fellow">+ Add fellow</button>
     </fieldset>
 
     <div class="submit-row">
@@ -139,6 +139,7 @@
   <div class="row fellow-row">
     <div class="fellow-row-header">
       <input type="text" class="fellow-name" placeholder="Fellow name" required>
+      <span class="required-marker" aria-hidden="true">*</span>
       <select class="fellow-type">
         <option value="full-time">Full-time</option>
         <option value="research">Research</option>
