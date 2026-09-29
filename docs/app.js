@@ -395,11 +395,11 @@ async function runSolve(config) {
   hideError();
   resultsEl.hidden = true;
   submitBtn.disabled = true;
-  showLoading("Contacting scheduler…");
+  showLoading("Calculating schedule...");
 
   const wakingTimer = setTimeout(() => {
     if (!serverLikelyWarm) {
-      showLoading("Waking up the scheduling server — this can take up to a minute if it's been idle. Please don't close this tab.");
+      showLoading("Waking up the server – this can take up to a minute. Please don't close this tab.");
     }
   }, 4000);
 
@@ -415,7 +415,7 @@ async function runSolve(config) {
     });
 
     if (response.status === 401) {
-      showError("This tool is temporarily unable to authenticate with the scheduling server. This is not something you can fix — please contact the maintainer.");
+      showError("This tool is temporarily unable to authenticate with the server. Please contact Rahul.");
       return;
     }
 
@@ -445,7 +445,7 @@ async function runSolve(config) {
       showError("The server took too long to respond — it may still be waking up. Please wait a moment and try again.", { retry: true });
     } else {
       pendingRetryConfig = config;
-      showError("Could not reach the scheduling server. Check your internet connection and try again.", { retry: true });
+      showError("Could not reach the server. Check your internet connection and try again.", { retry: true });
     }
   } finally {
     clearTimeout(wakingTimer);

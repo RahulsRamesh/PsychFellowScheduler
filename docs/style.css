@@ -308,7 +308,12 @@ button[type="submit"]:disabled {
   cursor: pointer;
 }
 
-.loading {
+/* :not([hidden]) matters here — an author-stylesheet class selector
+   otherwise beats the browser's default [hidden]{display:none} rule, so
+   `.loading{display:flex}` alone would keep this visible even with the
+   hidden attribute set. Same reasoning would apply to any other toggled
+   element if it ever needs an explicit `display` value. */
+.loading:not([hidden]) {
   display: flex;
   align-items: center;
   gap: 0.75rem;
