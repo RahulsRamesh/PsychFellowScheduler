@@ -36,7 +36,7 @@ def reified_eq(model, x, y, name):
     return b
 
 
-def solve(config: dict, time_limit_s: int = 30):
+def solve(config: dict, time_limit_s: int = 45):
     # config may still carry a v1-era `case_supervisors` key (e.g. if the
     # caller reuses config_from_real_data.json as-is) — it's unused input
     # now that supervisor is solved for, not fixed. Ignore it rather than
