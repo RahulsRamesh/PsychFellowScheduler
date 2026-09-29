@@ -60,7 +60,7 @@ def main():
         print(f"{case['fellow']} - case {case['case_index']} (tier {case['tier']}, "
               f"primary {case['primary_supervisor']}, secondary {case['secondary_supervisor']}):")
         for v in case["visits"]:
-            print(f"   {v['type']:10s} {v['date']}  {v['modality']:11s} sup={v['supervisor']}")
+            print(f"   {v['type']:10s} {v['date']} {v['time']}  {v['modality']:11s} sup={v['supervisor']}")
 
     return 1 if violations else 0
 

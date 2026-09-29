@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-from v2.solve import solve
+from v2.solve import solve, _assign_feedback_times
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +50,7 @@ def test_solve_returns_optimal_or_feasible(result):
     assert result["status"] in ("OPTIMAL", "FEASIBLE")
 
 
-# ---- 1: same 4 keys in soft_violations and soft_violation_details ----
+# ---- 1: same 6 keys in soft_violations and soft_violation_details ----
 def test_details_keys_match_violations_keys(result):
     assert set(result["soft_violation_details"].keys()) == set(result["soft_violations"].keys())
     assert set(result["soft_violation_details"].keys()) == {
@@ -58,6 +58,8 @@ def test_details_keys_match_violations_keys(result):
         "ksads3_mismatch (soft #1)",
         "med_position (soft #3)",
         "case_gap (soft #4)",
+        "feedback_215 (soft #5)",
+        "feedback_triple (soft #6)",
     }
 
 
@@ -68,6 +70,8 @@ def test_case_scoped_entries_reference_real_cases(result):
         "ksads3_mismatch (soft #1)",
         "med_position (soft #3)",
         "case_gap (soft #4)",
+        "feedback_215 (soft #5)",
+        "feedback_triple (soft #6)",
     ]
     for key in case_scoped_keys:
         for entry in result["soft_violation_details"][key]:
@@ -198,12 +202,12 @@ def test_case_gap_matches_late_feedback_escape_valve(result):
             ksads1_b = next(v for v in b["visits"] if v["type"] == "KSADS1")
             is_tied = fb_a["date"] == ksads1_b["date"]
 
-            # The "late" flag must agree with the actual dates, regardless
-            # of what soft_violation_details says.
-            assert bool(fb_a.get("late")) == is_tied, (
-                f"{fellow} case {a['case_index']}: Feedback 'late'={fb_a.get('late')} "
-                f"but actual tie status (Feedback {fb_a['date']} vs next KSADS1 "
-                f"{ksads1_b['date']}) is {is_tied}")
+            # A tied Feedback must be at 2:15 (after the noon KSADS1 ends),
+            # regardless of what soft_violation_details says.
+            if is_tied:
+                assert fb_a["time"] == "14:15", (
+                    f"{fellow} case {a['case_index']}: Feedback on {fb_a['date']} is "
+                    f"tied with the next KSADS1 but is at {fb_a['time']}, not 2:15")
 
             if is_tied:
                 assert (fellow, a["case_index"]) in flagged, (
@@ -214,3 +218,59 @@ def test_case_gap_matches_late_feedback_escape_valve(result):
                     f"{fellow} case {b['case_index']}'s KSADS1 is genuinely tied "
                     f"with case {a['case_index']}'s Feedback but is missing from "
                     f"case_gap details")
+
+
+@pytest.mark.parametrize("fb_cases,late,has_med,expected", [
+    ([0], set(), False, {0: "12:00"}),                                   # lone Feedback
+    ([0], {0}, False, {0: "14:15"}),                                     # lone late Feedback
+    ([0], set(), True, {0: "14:15"}),                                    # Med + Feedback
+    ([0], {0}, True, {0: "14:15"}),                                      # Med + late Feedback
+    ([0, 1], set(), False, {0: "12:00", 1: "14:15"}),                    # 2 Feedbacks: never 12:45
+    ([0, 1], {0}, False, {1: "12:00", 0: "14:15"}),                      # late one takes 2:15
+    ([0, 1, 2], set(), False, {0: "12:00", 1: "12:45", 2: "14:15"}),     # triple day
+    ([0, 1, 2], {0}, False, {1: "12:00", 2: "12:45", 0: "14:15"}),       # triple, late takes 2:15
+])
+def test_assign_feedback_times(fb_cases, late, has_med, expected):
+    is_late = {ci: ci in late for ci in fb_cases}
+    assert _assign_feedback_times(fb_cases, is_late, has_med) == expected
+
+
+def _next_case_ksads1_dates(result):
+    """(fellow, case_index) -> date of that fellow's NEXT case's KSADS1."""
+    by_fellow = {}
+    for case in result["cases"]:
+        by_fellow.setdefault(case["fellow"], []).append(case)
+    out = {}
+    for fellow, fcases in by_fellow.items():
+        fcases_sorted = sorted(fcases, key=lambda c: c["case_index"])
+        for a, b in zip(fcases_sorted, fcases_sorted[1:]):
+            out[fellow, a["case_index"]] = visit_of(b, "KSADS1")["date"]
+    return out
+
+
+# ---- 5 (feedback_215): exactly the 2:15 Feedbacks that aren't the
+# Rule 6 escape valve (which case_gap already counts) ----
+def test_feedback_215_matches_times(result):
+    details = result["soft_violation_details"]["feedback_215 (soft #5)"]
+    count = result["soft_violations"]["feedback_215 (soft #5)"]
+    next_k1 = _next_case_ksads1_dates(result)
+    expected = set()
+    for case in result["cases"]:
+        fb = visit_of(case, "Feedback")
+        key = (case["fellow"], case["case_index"])
+        if fb["time"] == "14:15" and next_k1.get(key) != fb["date"]:
+            expected.add(key)
+    assert {(e["fellow"], e["case_index"]) for e in details} == expected
+    assert count == len(expected)
+
+
+# ---- 6 (feedback_triple): count == number of days with 3 Feedbacks ----
+def test_feedback_triple_matches_times(result):
+    count = result["soft_violations"]["feedback_triple (soft #6)"]
+    per_day = {}
+    for case in result["cases"]:
+        fb = visit_of(case, "Feedback")
+        per_day.setdefault(fb["date"], []).append(fb["time"])
+    triple_days = [d for d, ts in per_day.items() if len(ts) == 3]
+    assert count == len(triple_days)
+    assert len(result["soft_violation_details"]["feedback_triple (soft #6)"]) == 3 * count

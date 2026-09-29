@@ -1,7 +1,7 @@
 """
 Proves verify_schedule() actually catches violations, not just that it
 passes on good output: one deliberately-corrupted schedule per hard rule
-(1-10), each asserted to trip that specific rule's check, plus one assert
+(1-11), each asserted to trip that specific rule's check, plus one assert
 that a genuinely solved schedule passes clean.
 
 Corruptions are applied directly to solve()'s output dict (not by
@@ -111,43 +111,32 @@ def test_rule6_cases_sequential(clean_result, config):
 
 
 def test_rule6_late_feedback_escape_valve_allowed(clean_result, config):
-    # A legitimate same-day tie (Feedback marked late) is NOT a violation —
-    # this is the coordinator's real-world escape valve, not a bug.
+    # A same-day tie with the Feedback at 2:15 (after the noon KSADS1
+    # ends) is NOT a Rule 6 violation — this is the coordinator's
+    # real-world escape valve, not a bug. Scoped to Rule 6: moving the
+    # Feedback to 2:15 can incidentally collide with another Feedback
+    # already at 2:15 that day (a Rule 11 matter, not this test's).
     bad = copy.deepcopy(clean_result)
     case0 = case_of(bad, "Fellow A", 0)
     case1 = case_of(bad, "Fellow A", 1)
     fb0 = visit_of(case0, "Feedback")
     ksads1_1 = visit_of(case1, "KSADS1")
     ksads1_1["date"] = fb0["date"]
-    fb0["late"] = True
-    assert verify_schedule(config, bad) == []
+    fb0["time"] = "14:15"
+    assert not [v for v in verify_schedule(config, bad) if v.startswith("Rule 6:")]
 
 
-def test_rule6_ksads1_tied_but_feedback_not_marked_late(clean_result, config):
-    # Same-day tie without the "late" flag is still a Rule 6 violation —
-    # the exception only exists when the escape valve was actually used.
+@pytest.mark.parametrize("fb_time", ["12:00", "12:45"])
+def test_rule6_ksads1_tied_but_feedback_overlaps(clean_result, config, fb_time):
+    # Same-day tie with the Feedback at 12:00 or 12:45 overlaps the noon
+    # KSADS1 (12:00-1:30) — still a Rule 6 violation.
     bad = copy.deepcopy(clean_result)
     case0 = case_of(bad, "Fellow A", 0)
     case1 = case_of(bad, "Fellow A", 1)
     fb0 = visit_of(case0, "Feedback")
     ksads1_1 = visit_of(case1, "KSADS1")
     ksads1_1["date"] = fb0["date"]
-    fb0["late"] = False
-    assert_rule_flagged(verify_schedule(config, bad), 6)
-
-
-def test_rule6_late_flag_without_actual_tie_is_inconsistent(clean_result, config):
-    # "late" claims the escape valve was used, but the dates don't
-    # actually match — inconsistent solver bookkeeping, not a real tie.
-    # Force the mismatch explicitly (don't assume the baseline solve
-    # didn't already legitimately tie this transition on its own).
-    bad = copy.deepcopy(clean_result)
-    case0 = case_of(bad, "Fellow A", 0)
-    case1 = case_of(bad, "Fellow A", 1)
-    fb0 = visit_of(case0, "Feedback")
-    ksads1_1 = visit_of(case1, "KSADS1")
-    fb0["late"] = True
-    ksads1_1["date"] = "2099-01-05"  # deliberately does not match fb0's date
+    fb0["time"] = fb_time
     assert_rule_flagged(verify_schedule(config, bad), 6)
 
 
@@ -229,3 +218,58 @@ def test_rule10_ksads3_judged_independently(clean_result, config):
         f"KSADS1/2 are correctly in-person (non-Marvin supervisor) and must not "
         f"trigger Rule 10 just because KSADS3 in the same case involves Marvin: "
         f"{rule10_violations}")
+
+
+def _md_visits(result):
+    return [(c, v) for c in result["cases"] for v in c["visits"]
+            if v["type"] in ("Med", "Feedback")]
+
+
+def test_rule11_med_and_feedback_overlap(clean_result, config):
+    # A Feedback at 12:45 on another case's Med day overlaps the Med
+    # (12:00-1:30) — only 2:15 is allowed alongside a Med.
+    bad = copy.deepcopy(clean_result)
+    med = visit_of(case_of(bad, "Fellow A", 0), "Med")
+    fb = visit_of(case_of(bad, "Fellow B", 0), "Feedback")
+    fb["date"], fb["time"] = med["date"], "12:45"
+    assert_rule_flagged(verify_schedule(config, bad), 11)
+
+
+def test_rule11_med_and_feedback_at_215_ok(clean_result, config):
+    bad = copy.deepcopy(clean_result)
+    med = visit_of(case_of(bad, "Fellow A", 0), "Med")
+    fb = visit_of(case_of(bad, "Fellow B", 0), "Feedback")
+    fb["date"], fb["time"] = med["date"], "14:15"
+    # Scoped to Rule 11 against this specific pair: the move itself may
+    # incidentally break unrelated rules (e.g. Fellow B's case order).
+    rule11 = [v for v in verify_schedule(config, bad)
+              if v.startswith("Rule 11:") and "Fellow B case 0/Feedback" in v
+              and "Fellow A case 0/Med" in v]
+    assert not rule11
+
+
+def test_rule11_two_feedbacks_same_slot(clean_result, config):
+    bad = copy.deepcopy(clean_result)
+    fb_a = visit_of(case_of(bad, "Fellow A", 0), "Feedback")
+    fb_b = visit_of(case_of(bad, "Fellow B", 0), "Feedback")
+    fb_b["date"], fb_b["time"] = fb_a["date"], fb_a["time"]
+    assert_rule_flagged(verify_schedule(config, bad), 11)
+
+
+def test_rule11_invalid_time(clean_result, config):
+    bad = copy.deepcopy(clean_result)
+    visit_of(case_of(bad, "Fellow A", 0), "Med")["time"] = "14:15"  # Med is noon-only
+    assert_rule_flagged(verify_schedule(config, bad), 11)
+
+
+def test_solver_feedback_times_follow_preferences(clean_result):
+    # Independent check of the solver's slot choices: 12:45 only ever
+    # appears on a 3-Feedback day (2 Feedbacks go 12:00 + 2:15).
+    by_date = {}
+    for c, v in _md_visits(clean_result):
+        by_date.setdefault(v["date"], []).append(v)
+    for d, vs in by_date.items():
+        fbs = [v for v in vs if v["type"] == "Feedback"]
+        for v in fbs:
+            if v["time"] == "12:45":
+                assert len(fbs) == 3, f"12:45 Feedback on {d} without a 3-Feedback day: {vs}"

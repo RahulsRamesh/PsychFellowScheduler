@@ -73,7 +73,7 @@ def solve_endpoint(config: dict, _: None = Depends(require_api_key)):
         raise HTTPException(status_code=422, detail=str(e))
 
     violations = (
-        verify_schedule(config, result) if result["status"] != "INFEASIBLE" else []
+        verify_schedule(config, result) if result["status"] in ("OPTIMAL", "FEASIBLE") else []
     )
 
     return {"result": result, "hard_rule_violations": violations}

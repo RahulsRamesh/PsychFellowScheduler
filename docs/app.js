@@ -573,6 +573,12 @@ async function runSolve(config) {
       return;
     }
 
+    if (body.result.status === "TIMEOUT") {
+      pendingRetryConfig = config;
+      showError("The solver ran out of time before finding a schedule. This doesn't mean your inputs are impossible, please try again. If this issue persists, try relaxing some of the date constraints.", { retry: true });
+      return;
+    }
+
     renderResults(body.result, body.hard_rule_violations);
     saveResult(body.result, body.hard_rule_violations);
   } catch (err) {
@@ -614,6 +620,8 @@ const SOFT_RULE_LABELS = {
   "ksads3_mismatch (soft #1)": "KSADS3 supervisor mismatch",
   "med_position (soft #3)": "Med visit position",
   "case_gap (soft #4)": "Overlap of cases",
+  "feedback_215 (soft #5)": "2:15pm Feedback",
+  "feedback_triple (soft #6)": "Triple Feedback days",
 };
 
 const SOFT_RULE_TOOLTIPS = {
@@ -621,6 +629,8 @@ const SOFT_RULE_TOOLTIPS = {
   "ksads3_mismatch (soft #1)": "Measures how many instances KSADS3 is supervised by someone different than the KSADS1/2 supervisor.",
   "med_position (soft #3)": "Measures how many cases broke the preferred Med-visit timing: cases 1/2 shouldn't start with Med, cases 3/4 should.",
   "case_gap (soft #4)": "Measures how many times cases overlap and the next case starts on the same day as the previous case's Feedback.",
+  "feedback_215 (soft #5)": "Measures how many Feedbacks were pushed to 2:15pm because Dr. Horstmann already has a Med visit or another Feedback that day (case overlaps are counted separately above).",
+  "feedback_triple (soft #6)": "Measures how many days Dr. Horstmann has 3 Feedbacks (12pm, 12:45pm, 2:15pm). Last resort — weighted most heavily of all preferences.",
 };
 
 function supervisorLoadTooltip(name) {
@@ -662,6 +672,19 @@ function supervisorText(c) {
 const VISIT_TYPE_LABELS = { Med: "Med Visit" };
 const MODALITY_LABELS = { "in-person": "In-person", "telehealth": "Telehealth" };
 
+// Only non-noon start times get a badge — 12:00 is the default and shows
+// nothing. Only Feedback can ever start at 12:45 or 2:15 (see solve.py
+// Rule 11).
+const TIME_BADGES = {
+  "12:45": { text: "12:45pm", title: "Feedback is moved to 12:45pm because Dr. Horstmann has 3 Feedbacks that day." },
+  "14:15": { text: "2:15pm", title: "Appointment is pushed back to accommodate a same day appointment." },
+};
+
+function timeBadge(time) {
+  const b = TIME_BADGES[time];
+  return b ? ` <span class="late-badge" title="${b.title}">${b.text}</span>` : "";
+}
+
 // visitOrder "standard" keeps the template order (KSADS1, KSADS2, KSADS3,
 // Med, Feedback); "date" sorts chronologically instead. Dates are ISO
 // strings (YYYY-MM-DD), so a plain string sort is already chronological —
@@ -676,7 +699,7 @@ function visitTable(visits, visitOrder) {
   table.innerHTML = `
     <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
     <tbody>
-      ${ordered.map((v) => `<tr><td>${VISIT_TYPE_LABELS[v.type] || v.type}</td><td>${v.date}${v.late ? ' <span class="late-badge" title="Appointment is pushed back to accommodate a same day appointment.">2:15pm</span>' : ""}</td><td>${MODALITY_LABELS[v.modality] || v.modality}</td><td>${phdDisplayName(v.supervisor)}</td></tr>`).join("")}
+      ${ordered.map((v) => `<tr><td>${VISIT_TYPE_LABELS[v.type] || v.type}</td><td>${v.date}${timeBadge(v.time)}</td><td>${MODALITY_LABELS[v.modality] || v.modality}</td><td>${phdDisplayName(v.supervisor)}</td></tr>`).join("")}
     </tbody>
   `;
   return table;

@@ -8,7 +8,7 @@ solver's own bookkeeping. Two real modeling bugs were caught in this
 project by manually auditing output rather than trusting the model was
 correct — this is that pattern made automatic.
 
-Only hard rules (1-10) are checked here; soft-rule counting is solve()'s
+Only hard rules (1-11) are checked here; soft-rule counting is solve()'s
 summary's job, not this function's.
 """
 
@@ -98,20 +98,14 @@ def verify_schedule(config: dict, result: dict) -> list:
 
     # ---- Rule 6: a fellow's cases run strictly sequentially ----
     # One exception: case B's KSADS1 may equal case A's Feedback date, but
-    # only when that Feedback is marked "late" (the coordinator's 2:15
-    # escape valve — Feedback's flexible time-of-day lets it real-world-
-    # follow a same-day noon KSADS1). Every other visit must be strictly
-    # after, no exceptions. Also independently cross-checks the "late"
-    # flag itself: it must be true exactly when the dates actually tie,
-    # never true without a real tie (which would be inconsistent solver
-    # bookkeeping) and never absent when a tie exists (which would be an
-    # ungated Rule 6 violation).
+    # only when that Feedback's reported time actually starts after the
+    # noon KSADS1 ends — the coordinator's 2:15 escape valve. Every other
+    # visit must be strictly after, no exceptions.
     for fname, fcases in by_fellow.items():
         fcases_sorted = sorted(fcases, key=lambda c: c["case_index"])
         for a, b in zip(fcases_sorted, fcases_sorted[1:]):
             fb_visit_a = next(v for v in a["visits"] if v["type"] == "Feedback")
             fb_date_a = parse(fb_visit_a["date"])
-            fb_late_a = bool(fb_visit_a.get("late"))
             for v in b["visits"]:
                 v_date = parse(v["date"])
                 if v["type"] == "KSADS1":
@@ -119,16 +113,11 @@ def verify_schedule(config: dict, result: dict) -> list:
                         violations.append(
                             f"Rule 6: {fname} case {b['case_index']} KSADS1 ({v['date']}) "
                             f"is before case {a['case_index']}'s Feedback ({fb_date_a})")
-                    elif v_date == fb_date_a and not fb_late_a:
+                    elif v_date == fb_date_a and _overlaps(v, fb_visit_a):
                         violations.append(
                             f"Rule 6: {fname} case {b['case_index']} KSADS1 shares a date "
-                            f"with case {a['case_index']}'s Feedback ({fb_date_a}) but that "
-                            f"Feedback isn't marked late")
-                    elif v_date != fb_date_a and fb_late_a:
-                        violations.append(
-                            f"Rule 6: {fname} case {a['case_index']}'s Feedback is marked "
-                            f"late but case {b['case_index']}'s KSADS1 ({v['date']}) doesn't "
-                            f"actually share its date ({fb_date_a}) — inconsistent bookkeeping")
+                            f"with case {a['case_index']}'s Feedback ({fb_date_a}) but the "
+                            f"Feedback's time ({fb_visit_a.get('time')}) overlaps it")
                 elif v_date <= fb_date_a:
                     violations.append(
                         f"Rule 6: {fname} case {b['case_index']} visit {v['type']} "
@@ -192,4 +181,52 @@ def verify_schedule(config: dict, result: dict) -> list:
                     f"(supervisor {v.get('supervisor')}) should be {expected}, "
                     f"got {v['modality']}")
 
+    # ---- Rule 11: MD time slots ----
+    # Each visit's reported start time must be a legal one for its type,
+    # and no two of the MD's visits on the same date may overlap in time
+    # (Med 90 min, Feedback 45 min). Rebuilt from the output's own
+    # `supervisor`/`time` fields.
+    md_by_date = {}
+    for case in cases:
+        for v in case["visits"]:
+            t = v.get("time")
+            allowed = FEEDBACK_TIMES if v["type"] == "Feedback" else ("12:00",)
+            if t not in allowed:
+                violations.append(
+                    f"Rule 11: {case['fellow']} case {case['case_index']} {v['type']} "
+                    f"on {v['date']} has invalid start time {t!r} (allowed: {allowed})")
+                continue
+            if v.get("supervisor") == md_supervisor:
+                md_by_date.setdefault(v["date"], []).append((case, v))
+    for d, entries in md_by_date.items():
+        for i in range(len(entries)):
+            for j in range(i + 1, len(entries)):
+                (c1, v1), (c2, v2) = entries[i], entries[j]
+                if _overlaps(v1, v2):
+                    violations.append(
+                        f"Rule 11: {md_supervisor} double-booked on {d}: "
+                        f"{c1['fellow']} case {c1['case_index']}/{v1['type']} at {v1['time']} "
+                        f"overlaps {c2['fellow']} case {c2['case_index']}/{v2['type']} at {v2['time']}")
+
     return violations
+
+
+FEEDBACK_TIMES = ("12:00", "12:45", "14:15")
+
+
+def _minutes(visit):
+    """(start, end) in minutes since midnight. Feedback ~45 min, every
+    other visit 90 min. Missing/invalid time is treated as noon — Rule 11
+    reports the bad time itself separately."""
+    try:
+        h, m = map(int, visit.get("time", "12:00").split(":"))
+    except (AttributeError, ValueError):
+        h, m = 12, 0
+    start = h * 60 + m
+    return start, start + (45 if visit["type"] == "Feedback" else 90)
+
+
+def _overlaps(v1, v2):
+    s1, e1 = _minutes(v1)
+    s2, e2 = _minutes(v2)
+    return s1 < e2 and s2 < e1
