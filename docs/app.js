@@ -781,6 +781,11 @@ function renderResults(result, hardRuleViolations) {
     applyHighlights();
   }
 
+  const toggleLabel = document.createElement("p");
+  toggleLabel.className = "toggle-label";
+  toggleLabel.textContent = "Toggle cases display";
+  resultsEl.appendChild(toggleLabel);
+
   const toggleRow = document.createElement("div");
   toggleRow.className = "group-toggle";
   const byFellowBtn = document.createElement("button");
@@ -791,6 +796,11 @@ function renderResults(result, hardRuleViolations) {
   byCaseBtn.textContent = "By case #";
   toggleRow.append(byFellowBtn, byCaseBtn);
   resultsEl.appendChild(toggleRow);
+
+  const orderToggleLabel = document.createElement("p");
+  orderToggleLabel.className = "toggle-label";
+  orderToggleLabel.textContent = "Toggle appointment display";
+  resultsEl.appendChild(orderToggleLabel);
 
   const orderToggleRow = document.createElement("div");
   orderToggleRow.className = "group-toggle";

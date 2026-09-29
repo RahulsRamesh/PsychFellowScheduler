@@ -390,6 +390,12 @@ button[type="submit"]:disabled {
   margin-bottom: 1.5rem;
 }
 
+.toggle-label {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.35rem;
+}
+
 .group-toggle {
   display: inline-flex;
   border: 1px solid var(--color-border);
