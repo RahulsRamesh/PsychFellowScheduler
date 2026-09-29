@@ -47,6 +47,12 @@ const resultsEl = document.getElementById("results");
 let serverLikelyWarm = false;
 let pendingRetryConfig = null;
 
+// Versioned so a future schema change can be introduced by bumping the
+// suffix — old, incompatible saved blobs are then simply never read
+// again rather than needing a migration or crashing restore logic.
+const STORAGE_KEY_FORM = "pfs-form-state-v1";
+const STORAGE_KEY_RESULT = "pfs-last-result-v1";
+
 // ---------------------------------------------------------------------
 // Wake the Render free-tier instance the moment the page loads, well
 // before the coordinator finishes the form — the single highest-leverage
@@ -67,18 +73,21 @@ document.body.addEventListener("click", (e) => {
     const scope = addRowBtn.closest(".row") || document;
     const target = scope.querySelector(addRowBtn.dataset.target) || document.querySelector(addRowBtn.dataset.target);
     target.appendChild(tpl.content.cloneNode(true));
+    scheduleSave();
     return;
   }
 
   const addFellowBtn = e.target.closest('[data-action="add-fellow"]');
   if (addFellowBtn) {
     addFellowRow();
+    scheduleSave();
     return;
   }
 
   const removeBtn = e.target.closest('[data-action="remove-row"]');
   if (removeBtn) {
     removeBtn.closest(".row").remove();
+    scheduleSave();
   }
 });
 
@@ -87,8 +96,33 @@ function addFellowRow() {
   fellowsList.appendChild(tpl.content.cloneNode(true));
 }
 
-// Start with one empty fellow row so the form isn't empty on load.
-addFellowRow();
+// Restore a saved form (and last schedule, since rerunning the solver can
+// yield a different result — see renderResults) if one exists in
+// localStorage; otherwise start with one empty fellow row so the form
+// isn't empty on load. Wrapped in try/catch so a corrupted or
+// schema-incompatible saved blob can never break page load — worst case
+// we just fall back to a blank form.
+let restoredForm = false;
+try {
+  const savedFormJson = localStorage.getItem(STORAGE_KEY_FORM);
+  if (savedFormJson) {
+    restoreFormState(JSON.parse(savedFormJson));
+    restoredForm = true;
+  }
+} catch (e) {
+  // fall through to the blank-form default below
+}
+if (!restoredForm) addFellowRow();
+
+try {
+  const savedResultJson = localStorage.getItem(STORAGE_KEY_RESULT);
+  if (savedResultJson) {
+    const saved = JSON.parse(savedResultJson);
+    renderResults(saved.result, saved.hardRuleViolations);
+  }
+} catch (e) {
+  // ignore a corrupted saved result — just don't show anything
+}
 
 // ---------------------------------------------------------------------
 // Dev-only "Load sample data" button — gated on config.js's
@@ -156,6 +190,7 @@ function loadSampleData() {
   });
 
   resetValidationAndResultState();
+  scheduleSave();
 }
 
 if (typeof SHOW_LOAD_SAMPLE_BUTTON !== "undefined" && SHOW_LOAD_SAMPLE_BUTTON) {
@@ -175,24 +210,103 @@ function clearData() {
   );
   if (!confirmed) return;
 
-  document.getElementById("clinic_start").value = "";
-  document.getElementById("clinic_end").value = "";
-
-  document.getElementById("holidays-list").innerHTML = "";
-
-  PHD_NAMES.forEach((name) => {
-    document.querySelector(`[data-supervisor="${name}"]`).innerHTML = "";
-  });
-
-  document.getElementById("md-vacations-list").innerHTML = "";
-
-  fellowsList.innerHTML = "";
-  addFellowRow();
-
+  restoreFormState({});
   resetValidationAndResultState();
+  clearSavedState();
 }
 
 document.getElementById("clear-data-btn").addEventListener("click", clearData);
+
+// ---------------------------------------------------------------------
+// localStorage persistence — the form and the last generated schedule
+// (re-solving can yield a different, equally-valid result, so we persist
+// the actual schedule shown rather than just re-deriving it) survive a
+// page reload. All reads/writes are wrapped in try/catch: localStorage
+// can throw in private browsing or when disabled, and a saved blob can
+// be corrupted or from an older schema — persistence is a convenience,
+// never something that should be able to break the form itself.
+// ---------------------------------------------------------------------
+
+function captureFormState() {
+  return {
+    clinic_start: document.getElementById("clinic_start").value,
+    clinic_end: document.getElementById("clinic_end").value,
+    holidays: [...document.querySelectorAll("#holidays-list .date-range-row")].map((row) => [
+      row.querySelector(".start").value,
+      row.querySelector(".end").value,
+      row.querySelector(".notes")?.value || "",
+    ]),
+    supervisor_vacations: Object.fromEntries(
+      PHD_NAMES.map((name) => [name, readDateRanges(document.querySelector(`[data-supervisor="${name}"]`))])
+    ),
+    md_vacations: readDateRanges(document.getElementById("md-vacations-list")),
+    fellows: [...fellowsList.querySelectorAll(".fellow-row")].map((row) => ({
+      name: row.querySelector(".fellow-name").value,
+      type: row.querySelector(".fellow-type").value,
+      vacations: readDateRanges(row.querySelector(".vacation-list")),
+    })),
+  };
+}
+
+// Also used by "Clear data" (via restoreFormState({})) so both code paths
+// that reset the form share one implementation.
+function restoreFormState(saved) {
+  document.getElementById("clinic_start").value = saved.clinic_start || "";
+  document.getElementById("clinic_end").value = saved.clinic_end || "";
+
+  const holidaysListEl = document.getElementById("holidays-list");
+  holidaysListEl.innerHTML = "";
+  (saved.holidays || []).forEach(([s, e, notes]) => addFilledHolidayRow(holidaysListEl, s, e, notes));
+
+  PHD_NAMES.forEach((name) => {
+    const container = document.querySelector(`[data-supervisor="${name}"]`);
+    container.innerHTML = "";
+    ((saved.supervisor_vacations || {})[name] || []).forEach(([s, e]) => addFilledDateRangeRow(container, s, e));
+  });
+
+  const mdVacationsEl = document.getElementById("md-vacations-list");
+  mdVacationsEl.innerHTML = "";
+  (saved.md_vacations || []).forEach(([s, e]) => addFilledDateRangeRow(mdVacationsEl, s, e));
+
+  fellowsList.innerHTML = "";
+  (saved.fellows || []).forEach((f) => {
+    addFellowRow();
+    const row = fellowsList.lastElementChild;
+    row.querySelector(".fellow-name").value = f.name || "";
+    row.querySelector(".fellow-type").value = f.type || "full-time";
+    (f.vacations || []).forEach(([s, e]) => addFilledDateRangeRow(row.querySelector(".vacation-list"), s, e));
+  });
+  if (fellowsList.children.length === 0) addFellowRow();
+}
+
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_FORM, JSON.stringify(captureFormState()));
+    } catch (e) {
+      // ignore — see note above
+    }
+  }, 400);
+}
+
+function saveResult(result, hardRuleViolations) {
+  try {
+    localStorage.setItem(STORAGE_KEY_RESULT, JSON.stringify({ result, hardRuleViolations }));
+  } catch (e) {
+    // ignore — see note above
+  }
+}
+
+function clearSavedState() {
+  try {
+    localStorage.removeItem(STORAGE_KEY_FORM);
+    localStorage.removeItem(STORAGE_KEY_RESULT);
+  } catch (e) {
+    // ignore — see note above
+  }
+}
 
 // ---------------------------------------------------------------------
 // Validation
@@ -228,7 +342,10 @@ function setFieldError(el, message) {
 // Clear a field's error as soon as the coordinator edits it, rather than
 // only on re-submit.
 document.body.addEventListener("input", (e) => {
-  if (e.target.matches("input, select")) clearFieldError(e.target);
+  if (e.target.matches("input, select")) {
+    clearFieldError(e.target);
+    scheduleSave();
+  }
 });
 
 function mondaysBetween(start, end) {
@@ -457,6 +574,7 @@ async function runSolve(config) {
     }
 
     renderResults(body.result, body.hard_rule_violations);
+    saveResult(body.result, body.hard_rule_violations);
   } catch (err) {
     if (err.name === "AbortError") {
       pendingRetryConfig = config;
@@ -742,6 +860,11 @@ function renderResults(result, hardRuleViolations) {
     });
     return tile;
   }
+
+  const softGridLabel = document.createElement("p");
+  softGridLabel.className = "toggle-label";
+  softGridLabel.textContent = "Soft preference scores (lower is better but a schedule can still be fully valid with some non-zero.)";
+  resultsEl.appendChild(softGridLabel);
 
   const softValues = Object.values(result.soft_violations);
   const softMax = Math.max(1, ...softValues);
