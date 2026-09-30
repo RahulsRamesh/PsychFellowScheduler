@@ -959,7 +959,7 @@ function renderResults(result, hardRuleViolations) {
 
   const toggleLabel = document.createElement("p");
   toggleLabel.className = "toggle-label";
-  toggleLabel.textContent = "Toggle cases display";
+  toggleLabel.textContent = "Sort cases display";
   resultsEl.appendChild(toggleLabel);
 
   const toggleRow = document.createElement("div");
@@ -975,7 +975,7 @@ function renderResults(result, hardRuleViolations) {
 
   const orderToggleLabel = document.createElement("p");
   orderToggleLabel.className = "toggle-label";
-  orderToggleLabel.textContent = "Toggle appointment display";
+  orderToggleLabel.textContent = "Sort appointment display";
   resultsEl.appendChild(orderToggleLabel);
 
   const orderToggleRow = document.createElement("div");
