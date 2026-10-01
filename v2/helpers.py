@@ -45,6 +45,22 @@ def expand_ranges(ranges):
     return out
 
 
+def research_end_blocked_days(fellow: dict, clinic_end: datetime.date):
+    """Days a research fellow is unavailable because they finish before
+    the clinic does: everything after their (inclusive) `end_date` through
+    clinic_end. Empty set if the fellow has no end_date. Treated exactly
+    like vacation days by the solver."""
+    if not fellow.get("end_date"):
+        return set()
+    last_day = datetime.date.fromisoformat(fellow["end_date"])
+    out = set()
+    d = last_day + datetime.timedelta(days=1)
+    while d <= clinic_end:
+        out.add(d)
+        d += datetime.timedelta(days=1)
+    return out
+
+
 def build_case_template(case_index: int, fellow_type: str):
     """Visit-type list + tier for a case, given its position in the fellow's
     case sequence.

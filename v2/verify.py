@@ -68,6 +68,14 @@ def verify_schedule(config: dict, result: dict) -> list:
             if d in fellow_vacation.get(fname, set()):
                 violations.append(f"Rule 3: {fname} case {case['case_index']} "
                                    f"{v['type']} on {v['date']} falls on {fname}'s vacation")
+            # Research fellows' (inclusive) end_date — checked directly
+            # against the raw config value, not via solve.py's blocked-day
+            # expansion of it.
+            end_date = fellows.get(fname, {}).get("end_date")
+            if end_date and d > parse(end_date):
+                violations.append(f"Rule 3: {fname} case {case['case_index']} "
+                                   f"{v['type']} on {v['date']} is after {fname}'s "
+                                   f"research end date ({end_date})")
             sup = v.get("supervisor")
             if sup and d in supervisor_vacation.get(sup, set()):
                 violations.append(f"Rule 3: {fname} case {case['case_index']} "

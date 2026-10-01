@@ -65,6 +65,7 @@ const SAMPLE_DATA = {
     {
       name: "Research Fellow D",
       type: "research",
+      end_date: "2026-09-30",
       vacations: [
         ["2026-08-31", "2026-08-31"],
       ],

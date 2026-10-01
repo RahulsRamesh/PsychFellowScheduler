@@ -96,6 +96,18 @@ function addFellowRow() {
   fellowsList.appendChild(tpl.content.cloneNode(true));
 }
 
+// Research fellows get a required "End date" (their last working day,
+// inclusive); it's hidden — and ignored — for full-time fellows. Call
+// after anything that sets a row's type programmatically.
+function syncResearchEndField(row) {
+  row.querySelector(".research-end-field").hidden =
+    row.querySelector(".fellow-type").value !== "research";
+}
+
+document.body.addEventListener("change", (e) => {
+  if (e.target.matches(".fellow-type")) syncResearchEndField(e.target.closest(".fellow-row"));
+});
+
 // Restore a saved form (and last schedule, since rerunning the solver can
 // yield a different result — see renderResults) if one exists in
 // localStorage; otherwise start with one empty fellow row so the form
@@ -185,6 +197,8 @@ function loadSampleData() {
     const row = fellowsList.lastElementChild;
     row.querySelector(".fellow-name").value = f.name;
     row.querySelector(".fellow-type").value = f.type;
+    row.querySelector(".fellow-end-date").value = f.end_date || "";
+    syncResearchEndField(row);
     const vacationsEl = row.querySelector(".vacation-list");
     f.vacations.forEach(([s, e]) => addFilledDateRangeRow(vacationsEl, s, e));
   });
@@ -243,6 +257,7 @@ function captureFormState() {
     fellows: [...fellowsList.querySelectorAll(".fellow-row")].map((row) => ({
       name: row.querySelector(".fellow-name").value,
       type: row.querySelector(".fellow-type").value,
+      end_date: row.querySelector(".fellow-end-date").value,
       vacations: readDateRanges(row.querySelector(".vacation-list")),
     })),
   };
@@ -274,6 +289,8 @@ function restoreFormState(saved) {
     const row = fellowsList.lastElementChild;
     row.querySelector(".fellow-name").value = f.name || "";
     row.querySelector(".fellow-type").value = f.type || "full-time";
+    row.querySelector(".fellow-end-date").value = f.end_date || "";
+    syncResearchEndField(row);
     (f.vacations || []).forEach(([s, e]) => addFilledDateRangeRow(row.querySelector(".vacation-list"), s, e));
   });
   if (fellowsList.children.length === 0) addFellowRow();
@@ -419,6 +436,18 @@ function validate() {
     } else {
       seenNames.add(name);
     }
+    if (row.querySelector(".fellow-type").value === "research") {
+      const endEl = row.querySelector(".fellow-end-date");
+      const who = name || "A research fellow";
+      if (!endEl.value) {
+        setFieldError(endEl, "Research fellows need an end date.");
+        errors.push({ message: `${who} is missing a research end date.`, element: endEl });
+      } else if ((clinicStartEl.value && endEl.value < clinicStartEl.value) ||
+                 (clinicEndEl.value && endEl.value > clinicEndEl.value)) {
+        setFieldError(endEl, "End date must be within the clinic dates.");
+        errors.push({ message: `${who}'s end date must be within the clinic start and end dates.`, element: endEl });
+      }
+    }
     validateDateRangeRows(row.querySelector(".vacation-list"), errors);
   });
 
@@ -486,11 +515,15 @@ function assembleConfig() {
     vacations: readDateRanges(document.getElementById("md-vacations-list")),
   });
 
-  const fellows = [...fellowsList.querySelectorAll(".fellow-row")].map((row) => ({
-    name: row.querySelector(".fellow-name").value.trim(),
-    type: row.querySelector(".fellow-type").value,
-    vacations: readDateRanges(row.querySelector(".vacation-list")),
-  }));
+  const fellows = [...fellowsList.querySelectorAll(".fellow-row")].map((row) => {
+    const fellow = {
+      name: row.querySelector(".fellow-name").value.trim(),
+      type: row.querySelector(".fellow-type").value,
+      vacations: readDateRanges(row.querySelector(".vacation-list")),
+    };
+    if (fellow.type === "research") fellow.end_date = row.querySelector(".fellow-end-date").value;
+    return fellow;
+  });
 
   return {
     clinic_start: document.getElementById("clinic_start").value,

@@ -144,6 +144,13 @@
         <option value="full-time">Full-time</option>
         <option value="research">Research</option>
       </select>
+      <!-- Research fellows only (shown/hidden by syncResearchEndField in
+           app.js): their last working day, inclusive. -->
+      <label class="research-end-field" hidden>
+        End date
+        <input type="date" class="fellow-end-date">
+        <span class="required-marker" aria-hidden="true">*</span>
+      </label>
       <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove fellow">&times;</button>
     </div>
     <small class="field-error"></small>

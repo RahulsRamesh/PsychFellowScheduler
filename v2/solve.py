@@ -23,6 +23,7 @@ from .helpers import (
     daterange_mondays,
     expand_ranges,
     build_case_template,
+    research_end_blocked_days,
     SUPERVISOR_INDEX,
     INDEX_TO_SUPERVISOR,
 )
@@ -75,6 +76,23 @@ def solve(config: dict, time_limit_s: int = 45):
     fellows = {f["name"]: f for f in config["fellows"]}
     supervisors = {s["name"]: s for s in config["supervisors"]}
     fellow_vacation = {name: expand_ranges(f["vacations"]) for name, f in fellows.items()}
+
+    # Research fellows finish before the clinic does: their optional
+    # (inclusive) end_date blocks every later day, reusing the vacation
+    # machinery — so Rule 3 alone keeps all their appointments on or
+    # before it. Kept as a separate config field (not folded into
+    # `vacations`) so verify.py can check it on its own terms.
+    for name, f in fellows.items():
+        if not f.get("end_date"):
+            continue
+        if f["type"] != "research":
+            raise ValueError(f"{name}: end_date is only allowed for research fellows.")
+        end_date = datetime.date.fromisoformat(f["end_date"])
+        if not clinic_start <= end_date <= clinic_end:
+            raise ValueError(
+                f"{name}: research end date {f['end_date']} must be between the "
+                f"clinic start ({config['clinic_start']}) and end ({config['clinic_end']}).")
+        fellow_vacation[name] |= research_end_blocked_days(f, clinic_end)
     supervisor_vacation = {name: expand_ranges(s["vacations"]) for name, s in supervisors.items()}
 
     md_supervisor = next(s["name"] for s in config["supervisors"] if s["role"] == "MD")

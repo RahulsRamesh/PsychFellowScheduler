@@ -274,3 +274,29 @@ def test_feedback_triple_matches_times(result):
     triple_days = [d for d, ts in per_day.items() if len(ts) == 3]
     assert count == len(triple_days)
     assert len(result["soft_violation_details"]["feedback_triple (soft #6)"]) == 3 * count
+
+
+# ---- research end_date: every research visit on/before it; bad values
+# rejected up front with a ValueError (-> HTTP 422 in main.py) ----
+def test_research_visits_on_or_before_end_date(result, config):
+    for f in config["fellows"]:
+        if not f.get("end_date"):
+            continue
+        for case in result["cases"]:
+            if case["fellow"] == f["name"]:
+                for v in case["visits"]:
+                    assert v["date"] <= f["end_date"], (
+                        f"{f['name']} {v['type']} on {v['date']} is after end_date {f['end_date']}")
+
+
+@pytest.mark.parametrize("mutate,match", [
+    (lambda fs: fs[0].update(end_date="2026-11-30"), "only allowed for research"),
+    (lambda fs: next(f for f in fs if f["type"] == "research").update(end_date="2027-01-04"), "must be between"),
+    (lambda fs: next(f for f in fs if f["type"] == "research").update(end_date="2026-07-01"), "must be between"),
+])
+def test_bad_end_date_rejected(config, mutate, match):
+    import copy
+    cfg = copy.deepcopy(config)
+    mutate(cfg["fellows"])
+    with pytest.raises(ValueError, match=match):
+        solve(cfg)

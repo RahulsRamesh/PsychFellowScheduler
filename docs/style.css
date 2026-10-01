@@ -261,6 +261,20 @@ select.invalid {
   margin-right: 0.75rem;
 }
 
+/* Research fellows' end date, inline in the fellow header. The global
+   `label { display: flex }` would otherwise beat the browser's
+   [hidden]{display:none} (same issue as .loading), so hide explicitly. */
+.research-end-field[hidden] {
+  display: none;
+}
+
+.research-end-field:not([hidden]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 400;
+}
+
 .submit-row {
   display: flex;
   justify-content: flex-end;

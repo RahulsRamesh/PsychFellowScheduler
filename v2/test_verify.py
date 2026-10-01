@@ -273,3 +273,24 @@ def test_solver_feedback_times_follow_preferences(clean_result):
         for v in fbs:
             if v["time"] == "12:45":
                 assert len(fbs) == 3, f"12:45 Feedback on {d} without a 3-Feedback day: {vs}"
+
+
+def test_rule3_research_fellow_after_end_date(clean_result, config):
+    # A research fellow's visit past their (inclusive) end_date is a
+    # Rule 3 violation — checked against the raw config value.
+    bad = copy.deepcopy(clean_result)
+    fellow = next(f for f in config["fellows"] if f.get("end_date"))
+    fb = visit_of(case_of(bad, fellow["name"], 1), "Feedback")
+    fb["date"] = "2026-12-14"  # a non-holiday Monday after sample end_date 2026-11-30
+    violations = verify_schedule(config, bad)
+    assert any(v.startswith("Rule 3:") and "research end date" in v for v in violations), violations
+
+
+def test_rule3_research_end_date_is_inclusive(clean_result, config):
+    # An appointment ON the end date itself is allowed. Scoped to the
+    # end-date message: moving the visit can trip unrelated rules.
+    bad = copy.deepcopy(clean_result)
+    fellow = next(f for f in config["fellows"] if f.get("end_date"))
+    fb = visit_of(case_of(bad, fellow["name"], 1), "Feedback")
+    fb["date"] = fellow["end_date"]
+    assert not [v for v in verify_schedule(config, bad) if "research end date" in v]
