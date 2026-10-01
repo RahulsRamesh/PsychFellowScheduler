@@ -705,34 +705,44 @@ function supervisorText(c) {
 const VISIT_TYPE_LABELS = { Med: "Med Visit" };
 const MODALITY_LABELS = { "in-person": "In-person", "telehealth": "Telehealth" };
 
-// Only non-noon start times get a badge — 12:00 is the default and shows
-// nothing. Only Feedback can ever start at 12:45 or 2:15 (see solve.py
-// Rule 11).
+// Every Feedback gets a start-time badge (see solve.py Rule 11). 12pm is
+// the normal time, so its badge is neutral; 12:45 and 2:15 mean the
+// Feedback was pushed later and keep the amber warning style. Other visit
+// types are always at noon and get no badge.
 const TIME_BADGES = {
+  "12:00": { text: "12pm", title: "Feedback is at the standard 12pm time.", neutral: true },
   "12:45": { text: "12:45pm", title: "Appointment is moved to 12:45pm to accommodate multiple same-day appointments." },
   "14:15": { text: "2:15pm", title: "Appointment is pushed back to accommodate a same day appointment." },
 };
 
-function timeBadge(time) {
-  const b = TIME_BADGES[time];
-  return b ? ` <span class="late-badge" title="${b.title}">${b.text}</span>` : "";
+// Results saved before visits carried a `time` field only had a `late`
+// flag (2:15) — treat any other legacy Feedback as noon.
+function timeBadge(v) {
+  if (v.type !== "Feedback") return "";
+  const b = TIME_BADGES[v.time || (v.late ? "14:15" : "12:00")];
+  if (!b) return "";
+  return ` <span class="late-badge${b.neutral ? " neutral" : ""}" title="${b.title}">${b.text}</span>`;
 }
 
-// visitOrder "standard" keeps the template order (KSADS1, KSADS2, KSADS3,
-// Med, Feedback); "date" sorts chronologically instead. Dates are ISO
-// strings (YYYY-MM-DD), so a plain string sort is already chronological —
-// no Date parsing needed. All visits in a case have distinct dates (hard
-// rule), so there's never a tie to break.
-function visitTable(visits, visitOrder) {
-  const ordered = visitOrder === "date"
-    ? [...visits].sort((a, b) => a.date.localeCompare(b.date))
-    : visits;
+// Backend dates are ISO "YYYY-MM-DD"; the schedule shows "MM/DD/YYYY".
+// Plain string reshuffle — no Date parsing, so no timezone shifts.
+function formatDate(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${m}/${d}/${y}`;
+}
+
+// Visits are always shown chronologically. Sorting happens on the ISO
+// strings (before formatting), where a plain string sort is already
+// chronological. All visits in a case have distinct dates (hard rule), so
+// there's never a tie to break.
+function visitTable(visits) {
+  const ordered = [...visits].sort((a, b) => a.date.localeCompare(b.date));
   const table = document.createElement("table");
   table.className = "visit-table";
   table.innerHTML = `
     <thead><tr><th>Type</th><th>Date</th><th>Modality</th><th>Supervisor</th></tr></thead>
     <tbody>
-      ${ordered.map((v) => `<tr><td>${VISIT_TYPE_LABELS[v.type] || v.type}</td><td>${v.date}${timeBadge(v.time)}</td><td>${MODALITY_LABELS[v.modality] || v.modality}</td><td>${phdDisplayName(v.supervisor)}</td></tr>`).join("")}
+      ${ordered.map((v) => `<tr><td>${VISIT_TYPE_LABELS[v.type] || v.type}</td><td>${formatDate(v.date)}${timeBadge(v)}</td><td>${MODALITY_LABELS[v.modality] || v.modality}</td><td>${phdDisplayName(v.supervisor)}</td></tr>`).join("")}
     </tbody>
   `;
   return table;
@@ -748,7 +758,7 @@ function visitTable(visits, visitOrder) {
 // fellow-name label (the by-fellow <summary>, or the name <span> inside a
 // by-case# <h4>) gets class "fellow-label" + data-fellow, so stat-tile
 // highlighting can target elements identically in either grouping.
-function caseBlockFor(c, headingPrefixNodes, visitOrder) {
+function caseBlockFor(c, headingPrefixNodes) {
   const caseBlock = document.createElement("div");
   caseBlock.className = "case-block";
   caseBlock.dataset.fellow = c.fellow;
@@ -756,7 +766,7 @@ function caseBlockFor(c, headingPrefixNodes, visitOrder) {
   const h4 = document.createElement("h4");
   h4.append(...headingPrefixNodes);
   caseBlock.appendChild(h4);
-  caseBlock.appendChild(visitTable(c.visits, visitOrder));
+  caseBlock.appendChild(visitTable(c.visits));
   return caseBlock;
 }
 
@@ -768,7 +778,7 @@ function fellowLabel(tagName, fellow) {
   return el;
 }
 
-function renderSchedule(container, cases, groupBy, visitOrder) {
+function renderSchedule(container, cases, groupBy) {
   container.innerHTML = "";
 
   if (groupBy === "case") {
@@ -789,7 +799,7 @@ function renderSchedule(container, cases, groupBy, visitOrder) {
       details.appendChild(summary);
 
       group.forEach((c) => {
-        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — Supervisor: ${supervisorText(c)}`], visitOrder));
+        details.appendChild(caseBlockFor(c, [fellowLabel("span", c.fellow), ` — Supervisor: ${supervisorText(c)}`]));
       });
 
       container.appendChild(details);
@@ -814,7 +824,7 @@ function renderSchedule(container, cases, groupBy, visitOrder) {
     fellowCases
       .sort((a, b) => a.case_index - b.case_index)
       .forEach((c) => {
-        details.appendChild(caseBlockFor(c, [`Case ${c.case_index + 1} — Supervisor: ${supervisorText(c)}`], visitOrder));
+        details.appendChild(caseBlockFor(c, [`Case ${c.case_index + 1} — Supervisor: ${supervisorText(c)}`]));
       });
 
     container.appendChild(details);
@@ -944,16 +954,14 @@ function renderResults(result, hardRuleViolations) {
   });
   resultsEl.appendChild(loadGrid);
 
-  // Two independent toggles: group-by (fellow vs case #) and visit order
-  // within each case's table (standard template order vs chronological).
-  // Both are purely client-side re-renders of the already-fetched
-  // result.cases — no re-solve needed. Both always reset to their default
-  // for a fresh result, regardless of what was selected last time.
+  // Group-by toggle (fellow vs case #): a purely client-side re-render of
+  // the already-fetched result.cases — no re-solve needed. Always resets
+  // to "by fellow" for a fresh result. Visits within each case are always
+  // shown chronologically (see visitTable).
   let currentGroupBy = "fellow";
-  let currentVisitOrder = "standard";
 
   function rerenderSchedule() {
-    renderSchedule(scheduleContainer, result.cases, currentGroupBy, currentVisitOrder);
+    renderSchedule(scheduleContainer, result.cases, currentGroupBy);
     applyHighlights();
   }
 
@@ -973,22 +981,6 @@ function renderResults(result, hardRuleViolations) {
   toggleRow.append(byFellowBtn, byCaseBtn);
   resultsEl.appendChild(toggleRow);
 
-  const orderToggleLabel = document.createElement("p");
-  orderToggleLabel.className = "toggle-label";
-  orderToggleLabel.textContent = "Sort appointment display";
-  resultsEl.appendChild(orderToggleLabel);
-
-  const orderToggleRow = document.createElement("div");
-  orderToggleRow.className = "group-toggle";
-  const standardOrderBtn = document.createElement("button");
-  standardOrderBtn.type = "button";
-  standardOrderBtn.textContent = "Standard order";
-  const byDateBtn = document.createElement("button");
-  byDateBtn.type = "button";
-  byDateBtn.textContent = "By date";
-  orderToggleRow.append(standardOrderBtn, byDateBtn);
-  resultsEl.appendChild(orderToggleRow);
-
   const scheduleContainer = document.createElement("div");
   resultsEl.appendChild(scheduleContainer);
 
@@ -999,19 +991,9 @@ function renderResults(result, hardRuleViolations) {
     rerenderSchedule();
   }
 
-  function setVisitOrder(order) {
-    currentVisitOrder = order;
-    standardOrderBtn.classList.toggle("active", order === "standard");
-    byDateBtn.classList.toggle("active", order === "date");
-    rerenderSchedule();
-  }
-
   byFellowBtn.addEventListener("click", () => setGroupBy("fellow"));
   byCaseBtn.addEventListener("click", () => setGroupBy("case"));
-  standardOrderBtn.addEventListener("click", () => setVisitOrder("standard"));
-  byDateBtn.addEventListener("click", () => setVisitOrder("date"));
 
   byFellowBtn.classList.add("active");
-  standardOrderBtn.classList.add("active");
   rerenderSchedule();
 }

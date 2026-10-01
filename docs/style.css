@@ -540,7 +540,7 @@ table.visit-table td {
    with different column widths than a case without one, and stacked
    case tables no longer line up. Percentages sized for the widest real
    values: Type is short fixed-vocabulary ("Med Visit"), Date needs room
-   for "YYYY-MM-DD" plus the late-badge pill, Modality holds "In-person"/
+   for "MM/DD/YYYY" plus the time-badge pill, Modality holds "In-person"/
    "Telehealth", and Supervisor is the roomiest since it can hold a full
    display name like "Elizabeth Horstmann". */
 table.visit-table th:nth-child(1),
@@ -573,6 +573,12 @@ table.visit-table td:nth-child(4) {
   padding: 0.05rem 0.45rem;
   margin-left: 0.35rem;
   cursor: help;
+}
+
+/* 12pm Feedback: the normal time, so a muted pill rather than amber. */
+.late-badge.neutral {
+  color: var(--color-text-muted);
+  background: #ecece8;
 }
 
 table.visit-table tbody tr:nth-child(even) {
