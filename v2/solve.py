@@ -94,6 +94,9 @@ def solve(config: dict, time_limit_s: int = 45):
                 f"clinic start ({config['clinic_start']}) and end ({config['clinic_end']}).")
         fellow_vacation[name] |= research_end_blocked_days(f, clinic_end)
     supervisor_vacation = {name: expand_ranges(s["vacations"]) for name, s in supervisors.items()}
+    # Days a supervisor works remotely (optional, PhD and MD alike) — only
+    # matters for a fellow's first case; see Rule 10.
+    supervisor_virtual = {name: expand_ranges(s.get("virtual_days", [])) for name, s in supervisors.items()}
 
     md_supervisor = next(s["name"] for s in config["supervisors"] if s["role"] == "MD")
     phd_supervisors = [s["name"] for s in config["supervisors"] if s["role"] == "PhD"]
@@ -207,10 +210,11 @@ def solve(config: dict, time_limit_s: int = 45):
                 model.Add(date_var[ci, all_vt[i]] != date_var[ci, all_vt[j]])
 
     # ---- Rule 9: at least one in-person appointment per case ----
-    # Now trivially satisfied by construction — see Rule 10 below, which
-    # forces Med in-person in every case unconditionally — but kept as an
-    # explicit, independent check of the literal rule rather than relying
-    # on that as an implicit side effect.
+    # Only a fellow's first case can contain telehealth visits (Rule 10),
+    # and only via Marvin or a supervisor's virtual days — so this is what
+    # stops a first case from landing entirely on remote days (e.g. Marvin
+    # supervising KSADS1-3 while Med/Feedback fall on the MD's virtual
+    # days).
     for ci, case in enumerate(cases):
         model.Add(sum(modality_var[ci, vt] for vt in case["template"]) >= 1)
 
@@ -299,46 +303,74 @@ def solve(config: dict, time_limit_s: int = 45):
             sup_eq = reified_eq(model, s1, s2, f"pseq_{ci1}{vt1}_{ci2}{vt2}")
             model.Add(date_eq + sup_eq <= 1)
 
-    # ---- Rule 10 (updated 2026-09-27): modality defaults to in-person;
+    # ---- Rule 10 (updated 2026-10-01): modality defaults to in-person;
     # the only telehealth exception is a visit in a case_index==0 case
-    # that Marvin actually supervises ----
+    # whose supervisor is remote that day ----
     # Coordinator's reasoning: a fellow only shadows (doesn't lead) their
-    # supervisor during their very first case, and Marvin supervises fully
-    # virtually — so telehealth requires BOTH case_index==0 AND Marvin
-    # being the supervisor who actually runs that specific visit. This is
-    # judged per-visit, not per-case: KSADS1/KSADS2 share one supervisor
-    # (primary_var) and so share one modality decision, but KSADS3 has its
-    # own supervisor (secondary_var, the KSADS3 escape valve — soft rule
-    # 1) and is judged independently. It's entirely possible for KSADS1/2
-    # to be telehealth (primary is Marvin) while KSADS3 is in-person
-    # (reassigned away from Marvin), or the reverse. Med/Feedback are
-    # always MD-supervised, so they're forced in-person unconditionally,
-    # in every case — not just case_index==0 — with no exception ever.
-    for ci, case in enumerate(cases):
-        for vt in case["template"]:
-            if vt in ("Med", "Feedback"):
-                model.Add(modality_var[ci, vt] == 1)
+    # supervisor during their very first case, so that case follows the
+    # supervisor's location; from the second case on, the fellow runs it
+    # and the supervisor merely observes, so it stays in-person regardless.
+    # "Remote" means: Marvin (who always supervises virtually), or any
+    # supervisor — PhD or the MD — on one of their configured virtual days.
+    # Judged per-visit against the supervisor who actually runs that
+    # visit: KSADS1/2 use primary_var, KSADS3 uses secondary_var (the
+    # KSADS3 escape valve — soft rule 1), and Med/Feedback use the MD.
+    # Modality is fully determined by supervisor + date; the solver has no
+    # preference either way (Rule 9 still guarantees one in-person visit).
+    virtual_idx = {s: [monday_idx[d] for d in all_mondays if d in supervisor_virtual[s]]
+                   for s in supervisors}
 
+    def on_virtual_day(dv, s_name, name):
+        """BoolVar <=> dv is one of s_name's virtual Mondays, or None if
+        they have none (i.e. constant false)."""
+        idx = virtual_idx[s_name]
+        if not idx:
+            return None
+        dom = cp_model.Domain.FromValues(idx)
+        b = model.NewBoolVar(name)
+        model.AddLinearExpressionInDomain(dv, dom).OnlyEnforceIf(b)
+        model.AddLinearExpressionInDomain(dv, dom.complement()).OnlyEnforceIf(b.Not())
+        return b
+
+    def remote_ksads(ci, vt, sup_var):
+        """BoolVar <=> the PhD supervisor running this visit is remote that
+        day. One term per candidate supervisor: Marvin always, others only
+        on their virtual days."""
+        terms = []
+        for s_name, s_idx in SUPERVISOR_INDEX.items():
+            is_s = reified_eq(model, sup_var, s_idx, f"sup_is_{s_name}_{ci}_{vt}")
+            if s_name == "Marvin":
+                terms.append(is_s)
+                continue
+            on_v = on_virtual_day(date_var[ci, vt], s_name, f"virtual_{s_name}_{ci}_{vt}")
+            if on_v is None:
+                continue
+            t = model.NewBoolVar(f"remote_{s_name}_{ci}_{vt}")
+            model.AddBoolAnd([is_s, on_v]).OnlyEnforceIf(t)
+            model.AddBoolOr([is_s.Not(), on_v.Not()]).OnlyEnforceIf(t.Not())
+            terms.append(t)
+        remote = model.NewBoolVar(f"remote_{ci}_{vt}")
+        model.AddMaxEquality(remote, terms)
+        return remote
+
+    for ci, case in enumerate(cases):
         if case["case_index"] != 0:
-            # The shadow-vs-lead exception only ever applies to a
-            # fellow's very first case — every other case is always
-            # in-person for KSADS visits too.
+            # Fellow leads: always in-person, whatever the supervisor's day.
             for vt in case["template"]:
-                if vt.startswith("KSADS"):
-                    model.Add(modality_var[ci, vt] == 1)
+                model.Add(modality_var[ci, vt] == 1)
             continue
 
-        is_primary_marvin = reified_eq(model, primary_var[ci], SUPERVISOR_INDEX["Marvin"],
-                                        f"marvin_primary_{ci}")
-        for vt in ("KSADS1", "KSADS2"):
-            model.Add(modality_var[ci, vt] == 0).OnlyEnforceIf(is_primary_marvin)       # telehealth
-            model.Add(modality_var[ci, vt] == 1).OnlyEnforceIf(is_primary_marvin.Not())  # default in-person
-
-        if ci in secondary_var:
-            is_secondary_marvin = reified_eq(model, secondary_var[ci], SUPERVISOR_INDEX["Marvin"],
-                                              f"marvin_secondary_{ci}")
-            model.Add(modality_var[ci, "KSADS3"] == 0).OnlyEnforceIf(is_secondary_marvin)       # telehealth
-            model.Add(modality_var[ci, "KSADS3"] == 1).OnlyEnforceIf(is_secondary_marvin.Not())  # default in-person
+        for vt in case["template"]:
+            if vt in ("Med", "Feedback"):
+                remote = on_virtual_day(date_var[ci, vt], md_supervisor, f"virtual_md_{ci}_{vt}")
+            elif vt == "KSADS3":
+                remote = remote_ksads(ci, vt, secondary_var[ci])
+            else:  # KSADS1, KSADS2
+                remote = remote_ksads(ci, vt, primary_var[ci])
+            if remote is None:
+                model.Add(modality_var[ci, vt] == 1)
+            else:
+                model.Add(modality_var[ci, vt] == 1 - remote)  # telehealth iff remote
 
     # ---- Rule 11 (added 2026-09-29): MD time slots ----
     # Every non-Feedback visit runs 12:00-1:30 (90 min). Feedback is ~45

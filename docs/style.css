@@ -177,6 +177,16 @@ select.invalid {
   font-size: 1rem;
 }
 
+/* "Vacations" / "Virtual days" headings separating a supervisor's lists. */
+.supervisor-block .list-label {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.85rem;
+}
+
+.supervisor-block .list-label:first-of-type {
+  margin-top: 0;
+}
+
 .date-range-list {
   display: flex;
   flex-direction: column;

@@ -27,11 +27,23 @@ const SAMPLE_DATA = {
       ["2026-12-14", "2026-12-14"],
     ],
   },
+  // Marvin is always virtual, so only Walshaw/Ellis have virtual days.
+  supervisor_virtual_days: {
+    Walshaw: [
+      ["2026-07-27", "2026-08-14"],
+    ],
+    Ellis: [
+      ["2026-08-24", "2026-08-24"],
+    ],
+  },
   md: {
     name: "Horstmann",
     vacations: [
       ["2026-11-23", "2026-11-23"],
       ["2026-08-03", "2026-08-03"],
+    ],
+    virtual_days: [
+      ["2026-07-27", "2026-07-27"],
     ],
   },
   fellows: [

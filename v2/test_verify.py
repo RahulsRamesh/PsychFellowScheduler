@@ -205,13 +205,20 @@ def test_rule10_ksads3_judged_independently(clean_result, config):
     k3["supervisor"] = "Marvin"
     k3["modality"] = "in-person"   # wrong: Marvin + case_index 0 -> should be telehealth
 
-    violations = verify_schedule(config, bad)
+    # Judge against a copy of the config with no virtual days, so Walshaw
+    # is unambiguously in-person on these dates (the sample gives her
+    # virtual days that would otherwise make KSADS1/2 telehealth too).
+    cfg = copy.deepcopy(config)
+    for s in cfg["supervisors"]:
+        s["virtual_days"] = []
+    violations = verify_schedule(cfg, bad)
     assert_rule_flagged(violations, 10)
-    # Scope to Rule 10 specifically — reassigning KSADS1/2's supervisor
-    # to Walshaw for this test can incidentally land on one of her real
-    # vacation days (an unrelated Rule 3/8 violation), which isn't what
-    # this test is about.
-    rule10_violations = [v for v in violations if v.startswith("Rule 10:")]
+    # Scope to Fellow A's Rule 10 messages — reassigning KSADS1/2's
+    # supervisor can incidentally land on one of Walshaw's real vacation
+    # days (an unrelated Rule 3/8 violation), and dropping virtual days
+    # makes other fellows' virtual-day telehealth visits look wrong too;
+    # neither is what this test is about.
+    rule10_violations = [v for v in violations if v.startswith("Rule 10: Fellow A case 0 ")]
     assert any("KSADS3" in v for v in rule10_violations), (
         f"expected a KSADS3-specific Rule 10 violation: {rule10_violations}")
     assert not any("KSADS1" in v or "KSADS2" in v for v in rule10_violations), (
@@ -294,3 +301,24 @@ def test_rule3_research_end_date_is_inclusive(clean_result, config):
     fb = visit_of(case_of(bad, fellow["name"], 1), "Feedback")
     fb["date"] = fellow["end_date"]
     assert not [v for v in verify_schedule(config, bad) if "research end date" in v]
+
+
+def test_rule10_virtual_day_case0_must_be_telehealth(clean_result, config):
+    # Mark the MD virtual on a case-0 Med's date: that Med must now be
+    # telehealth, so the (unchanged, in-person) result is flagged.
+    cfg = copy.deepcopy(config)
+    med = visit_of(case_of(clean_result, "Fellow A", 0), "Med")
+    md = next(s for s in cfg["supervisors"] if s["role"] == "MD")
+    md["virtual_days"] = md.get("virtual_days", []) + [[med["date"], med["date"]]]
+    violations = verify_schedule(cfg, clean_result)
+    assert any(v.startswith("Rule 10:") and "Med" in v and "telehealth" in v for v in violations), violations
+
+
+def test_rule10_virtual_day_later_case_stays_in_person(clean_result, config):
+    # A virtual day only affects a fellow's first case — a later case's
+    # Med on that day is correctly in-person.
+    cfg = copy.deepcopy(config)
+    med = visit_of(case_of(clean_result, "Fellow A", 2), "Med")
+    md = next(s for s in cfg["supervisors"] if s["role"] == "MD")
+    md["virtual_days"] = md.get("virtual_days", []) + [[med["date"], med["date"]]]
+    assert not [v for v in verify_schedule(cfg, clean_result) if v.startswith("Rule 10:")]

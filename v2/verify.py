@@ -167,22 +167,23 @@ def verify_schedule(config: dict, result: dict) -> list:
             else:
                 sup_seen[key] = (case["fellow"], case["case_index"], v["type"])
 
-    # ---- Rule 10 (updated 2026-09-27): modality defaults to in-person;
+    # ---- Rule 10 (updated 2026-10-01): modality defaults to in-person;
     # the only telehealth exception is a visit in a case_index==0 case
-    # actually supervised by Marvin. Judged per-visit from the output's
-    # own reported `supervisor` field (not the case-level
-    # primary/secondary_supervisor bookkeeping), so KSADS3's escape-valve
-    # reassignment is judged independently of KSADS1/2, exactly matching
-    # solve.py's own per-visit modality constraints. Med/Feedback are
-    # always in-person, in every case, no exceptions.
+    # whose supervisor is remote that day — Marvin (always virtual) or any
+    # supervisor, PhD or MD, on one of their configured virtual days.
+    # Judged per-visit from the output's own reported `supervisor` field
+    # (not the case-level primary/secondary_supervisor bookkeeping), so
+    # KSADS3's escape-valve reassignment is judged independently of
+    # KSADS1/2, exactly matching solve.py's own per-visit constraints.
+    # Every later case is always in-person.
+    supervisor_virtual = {name: expand_ranges(s.get("virtual_days", []))
+                          for name, s in supervisors.items()}
     for case in cases:
         fname = case["fellow"]
         for v in case["visits"]:
-            if v["type"] in ("Med", "Feedback"):
-                expected = "in-person"
-            else:  # KSADS1/2/3
-                is_marvin_case0 = case["case_index"] == 0 and v.get("supervisor") == "Marvin"
-                expected = "telehealth" if is_marvin_case0 else "in-person"
+            sup = v.get("supervisor")
+            remote = sup == "Marvin" or parse(v["date"]) in supervisor_virtual.get(sup, set())
+            expected = "telehealth" if case["case_index"] == 0 and remote else "in-person"
             if v["modality"] != expected:
                 violations.append(
                     f"Rule 10: {fname} case {case['case_index']} {v['type']} "

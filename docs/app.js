@@ -14,6 +14,14 @@
 // anything sent to the API or matched against API responses.
 const PHD_NAMES = ["Walshaw", "Ellis", "Marvin"];
 
+// PhD supervisors with a "Virtual days" list. Marvin is always virtual
+// (hard-coded in the backend's Rule 10), so she has no list of her own.
+const PHD_VIRTUAL_NAMES = ["Walshaw", "Ellis"];
+
+function phdVirtualList(name) {
+  return document.querySelector(`[data-supervisor-virtual="${name}"]`);
+}
+
 const PHD_DISPLAY_NAMES = {
   Walshaw: "Patty Walshaw",
   Ellis: "Alissa Ellis",
@@ -191,6 +199,15 @@ function loadSampleData() {
   mdVacationsEl.innerHTML = "";
   SAMPLE_DATA.md.vacations.forEach(([s, e]) => addFilledDateRangeRow(mdVacationsEl, s, e));
 
+  PHD_VIRTUAL_NAMES.forEach((name) => {
+    const container = phdVirtualList(name);
+    container.innerHTML = "";
+    ((SAMPLE_DATA.supervisor_virtual_days || {})[name] || []).forEach(([s, e]) => addFilledDateRangeRow(container, s, e));
+  });
+  const mdVirtualEl = document.getElementById("md-virtual-list");
+  mdVirtualEl.innerHTML = "";
+  (SAMPLE_DATA.md.virtual_days || []).forEach(([s, e]) => addFilledDateRangeRow(mdVirtualEl, s, e));
+
   fellowsList.innerHTML = "";
   SAMPLE_DATA.fellows.forEach((f) => {
     addFellowRow();
@@ -254,6 +271,10 @@ function captureFormState() {
       PHD_NAMES.map((name) => [name, readDateRanges(document.querySelector(`[data-supervisor="${name}"]`))])
     ),
     md_vacations: readDateRanges(document.getElementById("md-vacations-list")),
+    supervisor_virtual_days: Object.fromEntries(
+      PHD_VIRTUAL_NAMES.map((name) => [name, readDateRanges(phdVirtualList(name))])
+    ),
+    md_virtual_days: readDateRanges(document.getElementById("md-virtual-list")),
     fellows: [...fellowsList.querySelectorAll(".fellow-row")].map((row) => ({
       name: row.querySelector(".fellow-name").value,
       type: row.querySelector(".fellow-type").value,
@@ -282,6 +303,15 @@ function restoreFormState(saved) {
   const mdVacationsEl = document.getElementById("md-vacations-list");
   mdVacationsEl.innerHTML = "";
   (saved.md_vacations || []).forEach(([s, e]) => addFilledDateRangeRow(mdVacationsEl, s, e));
+
+  PHD_VIRTUAL_NAMES.forEach((name) => {
+    const container = phdVirtualList(name);
+    container.innerHTML = "";
+    ((saved.supervisor_virtual_days || {})[name] || []).forEach(([s, e]) => addFilledDateRangeRow(container, s, e));
+  });
+  const mdVirtualEl = document.getElementById("md-virtual-list");
+  mdVirtualEl.innerHTML = "";
+  (saved.md_virtual_days || []).forEach(([s, e]) => addFilledDateRangeRow(mdVirtualEl, s, e));
 
   fellowsList.innerHTML = "";
   (saved.fellows || []).forEach((f) => {
@@ -418,6 +448,8 @@ function validate() {
   });
 
   validateDateRangeRows(document.getElementById("md-vacations-list"), errors);
+  PHD_VIRTUAL_NAMES.forEach((name) => validateDateRangeRows(phdVirtualList(name), errors));
+  validateDateRangeRows(document.getElementById("md-virtual-list"), errors);
 
   const fellowRows = [...fellowsList.querySelectorAll(".fellow-row")];
   if (fellowRows.length === 0) {
@@ -508,11 +540,13 @@ function assembleConfig() {
     name,
     role: "PhD",
     vacations: readDateRanges(document.querySelector(`[data-supervisor="${name}"]`)),
+    virtual_days: PHD_VIRTUAL_NAMES.includes(name) ? readDateRanges(phdVirtualList(name)) : [],
   }));
   supervisors.push({
     name: MD_NAME,
     role: "MD",
     vacations: readDateRanges(document.getElementById("md-vacations-list")),
+    virtual_days: readDateRanges(document.getElementById("md-virtual-list")),
   });
 
   const fellows = [...fellowsList.querySelectorAll(".fellow-row")].map((row) => {

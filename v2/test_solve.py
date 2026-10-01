@@ -300,3 +300,51 @@ def test_bad_end_date_rejected(config, mutate, match):
     mutate(cfg["fellows"])
     with pytest.raises(ValueError, match=match):
         solve(cfg)
+
+
+# ---- Rule 10 virtual days: a case_index==0 visit is telehealth exactly
+# when its supervisor is remote that day (Marvin always; anyone else on
+# their virtual_days); later cases are always in-person ----
+def _with_virtual(config, **ranges_by_supervisor):
+    import copy
+    cfg = copy.deepcopy(config)
+    for s in cfg["supervisors"]:
+        if s["name"] in ranges_by_supervisor:
+            s["virtual_days"] = ranges_by_supervisor[s["name"]]
+    return cfg
+
+
+def test_md_virtual_every_day_makes_case0_med_feedback_telehealth(config):
+    whole = [[config["clinic_start"], config["clinic_end"]]]
+    cfg = _with_virtual(config, Horstmann=whole)
+    r = solve(cfg)
+    assert r["status"] in ("OPTIMAL", "FEASIBLE")
+    for case in r["cases"]:
+        for v in case["visits"]:
+            if v["type"] in ("Med", "Feedback"):
+                want = "telehealth" if case["case_index"] == 0 else "in-person"
+                assert v["modality"] == want, (case["fellow"], case["case_index"], v)
+    from v2.verify import verify_schedule
+    assert verify_schedule(cfg, r) == []
+
+
+def test_everyone_virtual_every_day_is_infeasible(config):
+    # Every case-0 visit would be telehealth, breaking Rule 9 (>=1
+    # in-person per case) — so no schedule exists.
+    whole = [[config["clinic_start"], config["clinic_end"]]]
+    cfg = _with_virtual(config, Horstmann=whole, Walshaw=whole, Ellis=whole)
+    assert solve(cfg, time_limit_s=20)["status"] == "INFEASIBLE"
+
+
+def test_phd_virtual_every_day_makes_case0_ksads_telehealth(config):
+    # Walshaw/Ellis virtual every day + Marvin always virtual => every
+    # case-0 KSADS is telehealth; Med/Feedback (MD not virtual) keep each
+    # case-0 in-person; later cases are all in-person.
+    whole = [[config["clinic_start"], config["clinic_end"]]]
+    cfg = _with_virtual(config, Walshaw=whole, Ellis=whole, Horstmann=[])
+    r = solve(cfg)
+    assert r["status"] in ("OPTIMAL", "FEASIBLE")
+    for case in r["cases"]:
+        for v in case["visits"]:
+            remote_case0 = case["case_index"] == 0 and v["type"].startswith("KSADS")
+            assert v["modality"] == ("telehealth" if remote_case0 else "in-person"), (case["fellow"], case["case_index"], v)
