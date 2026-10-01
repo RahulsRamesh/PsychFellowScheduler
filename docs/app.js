@@ -1007,6 +1007,11 @@ function renderResults(result, hardRuleViolations) {
   });
   resultsEl.appendChild(softGrid);
 
+  const supervisorLoadGridLabel = document.createElement("p");
+  supervisorLoadGridLabel.className = "toggle-label";
+  supervisorLoadGridLabel.textContent = "Supervisor case load. Click a tile to highlight the cases that contributed to that count.";
+  resultsEl.appendChild(supervisorLoadGridLabel);
+
   const loadValues = Object.values(result.supervisor_case_load);
   const loadMax = Math.max(1, ...loadValues);
   const loadGrid = document.createElement("div");
