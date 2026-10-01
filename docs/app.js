@@ -861,9 +861,11 @@ function renderSchedule(container, cases, groupBy) {
 
   if (groupBy === "supervisor") {
     // Grouped by PRIMARY (KSADS1/2) supervisor only — a case whose KSADS3
-    // went to someone else still appears once, under its primary, with
-    // the "(KSADS3: ...)" note in its label. Within a group: case #, then
-    // fellow (same as "By case #").
+    // went to someone else still appears once, under its primary. Labels
+    // are just "Case N — Fellow" since the group heading names the
+    // supervisor (a different KSADS3 supervisor still shows in that row's
+    // Supervisor column). Within a group: case #, then fellow (same as
+    // "By case #").
     const bySupervisor = Object.fromEntries(PHD_NAMES.map((n) => [n, []]));
     cases.forEach((c) => {
       (bySupervisor[c.primary_supervisor] ||= []).push(c);
@@ -884,7 +886,6 @@ function renderSchedule(container, cases, groupBy) {
         details.appendChild(caseBlockFor(c, [
           `Case ${c.case_index + 1} — `,
           fellowLabel("span", c.fellow),
-          ` — Supervisor: ${supervisorText(c)}`,
         ]));
       });
 
