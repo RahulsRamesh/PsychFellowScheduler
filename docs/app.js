@@ -12,11 +12,14 @@
 // display-only layer: use phdDisplayName() anywhere a supervisor name is
 // shown to the coordinator, and keep using the raw short name for
 // anything sent to the API or matched against API responses.
-const PHD_NAMES = ["Walshaw", "Ellis", "Marvin"];
+// Alphabetical by last name — this order drives every supervisor list in
+// the UI (case-load tiles, "By supervisor" grouping, form loops); the form
+// blocks in index.html are written in the same order.
+const PHD_NAMES = ["Ellis", "Marvin", "Walshaw"];
 
 // PhD supervisors with a "Virtual days" list. Marvin is always virtual
 // (hard-coded in the backend's Rule 10), so she has no list of her own.
-const PHD_VIRTUAL_NAMES = ["Walshaw", "Ellis"];
+const PHD_VIRTUAL_NAMES = ["Ellis", "Walshaw"];
 
 function phdVirtualList(name) {
   return document.querySelector(`[data-supervisor-virtual="${name}"]`);
@@ -845,8 +848,50 @@ function fellowLabel(tagName, fellow) {
   return el;
 }
 
+// [name, value] pairs of a supervisor-keyed object in PHD_NAMES order;
+// any name not in PHD_NAMES (shouldn't happen) is appended at the end.
+function orderedSupervisorEntries(obj) {
+  const known = PHD_NAMES.filter((n) => n in obj);
+  const extra = Object.keys(obj).filter((n) => !PHD_NAMES.includes(n));
+  return [...known, ...extra].map((n) => [n, obj[n]]);
+}
+
 function renderSchedule(container, cases, groupBy) {
   container.innerHTML = "";
+
+  if (groupBy === "supervisor") {
+    // Grouped by PRIMARY (KSADS1/2) supervisor only — a case whose KSADS3
+    // went to someone else still appears once, under its primary, with
+    // the "(KSADS3: ...)" note in its label. Within a group: case #, then
+    // fellow (same as "By case #").
+    const bySupervisor = Object.fromEntries(PHD_NAMES.map((n) => [n, []]));
+    cases.forEach((c) => {
+      (bySupervisor[c.primary_supervisor] ||= []).push(c);
+    });
+
+    orderedSupervisorEntries(bySupervisor).forEach(([supervisor, group]) => {
+      if (group.length === 0) return;
+      group.sort((a, b) => a.case_index - b.case_index || a.fellow.localeCompare(b.fellow));
+      const details = document.createElement("details");
+      details.className = "fellow-block";
+      details.open = true;
+
+      const summary = document.createElement("summary");
+      summary.textContent = phdDisplayName(supervisor);
+      details.appendChild(summary);
+
+      group.forEach((c) => {
+        details.appendChild(caseBlockFor(c, [
+          `Case ${c.case_index + 1} — `,
+          fellowLabel("span", c.fellow),
+          ` — Supervisor: ${supervisorText(c)}`,
+        ]));
+      });
+
+      container.appendChild(details);
+    });
+    return;
+  }
 
   if (groupBy === "case") {
     const byCaseIndex = new Map();
@@ -993,7 +1038,7 @@ function renderResults(result, hardRuleViolations) {
 
   const softGridLabel = document.createElement("p");
   softGridLabel.className = "toggle-label";
-  softGridLabel.textContent = "Soft preference scores (lower is better but a schedule can still be fully valid with some being non-zero. Click a tile to highlight the cases that contributed to that score.)";
+  softGridLabel.textContent = "Soft preference scores (lower is better but a schedule can still be fully valid with some being non-zero.) Click a tile to highlight the cases that contributed to that score.";
   resultsEl.appendChild(softGridLabel);
 
   const tiles = softTiles(result);
@@ -1009,14 +1054,14 @@ function renderResults(result, hardRuleViolations) {
 
   const supervisorLoadGridLabel = document.createElement("p");
   supervisorLoadGridLabel.className = "toggle-label";
-  supervisorLoadGridLabel.textContent = "Supervisor case load. Click a tile to highlight the cases that contributed to that count.";
+  supervisorLoadGridLabel.textContent = "Supervisor primary case load. Click a tile to highlight the cases that contributed to that count.";
   resultsEl.appendChild(supervisorLoadGridLabel);
 
   const loadValues = Object.values(result.supervisor_case_load);
   const loadMax = Math.max(1, ...loadValues);
   const loadGrid = document.createElement("div");
   loadGrid.className = "stat-grid";
-  Object.entries(result.supervisor_case_load).forEach(([name, count]) => {
+  orderedSupervisorEntries(result.supervisor_case_load).forEach(([name, count]) => {
     // name stays the raw short form for matching (dataset.tile,
     // targetForSupervisor) — only the visible label/tooltip use the full
     // display name.
@@ -1050,7 +1095,10 @@ function renderResults(result, hardRuleViolations) {
   const byCaseBtn = document.createElement("button");
   byCaseBtn.type = "button";
   byCaseBtn.textContent = "By case #";
-  toggleRow.append(byFellowBtn, byCaseBtn);
+  const bySupervisorBtn = document.createElement("button");
+  bySupervisorBtn.type = "button";
+  bySupervisorBtn.textContent = "By supervisor";
+  toggleRow.append(byFellowBtn, byCaseBtn, bySupervisorBtn);
   resultsEl.appendChild(toggleRow);
 
   const scheduleContainer = document.createElement("div");
@@ -1060,11 +1108,13 @@ function renderResults(result, hardRuleViolations) {
     currentGroupBy = groupBy;
     byFellowBtn.classList.toggle("active", groupBy === "fellow");
     byCaseBtn.classList.toggle("active", groupBy === "case");
+    bySupervisorBtn.classList.toggle("active", groupBy === "supervisor");
     rerenderSchedule();
   }
 
   byFellowBtn.addEventListener("click", () => setGroupBy("fellow"));
   byCaseBtn.addEventListener("click", () => setGroupBy("case"));
+  bySupervisorBtn.addEventListener("click", () => setGroupBy("supervisor"));
 
   byFellowBtn.classList.add("active");
   rerenderSchedule();
