@@ -959,7 +959,7 @@ function renderResults(result, hardRuleViolations) {
 
   const softGridLabel = document.createElement("p");
   softGridLabel.className = "toggle-label";
-  softGridLabel.textContent = "Soft preference scores (lower is better but a schedule can still be fully valid with some non-zero.)";
+  softGridLabel.textContent = "Soft preference scores (lower is better but a schedule can still be fully valid with some being non-zero. Click a tile to highlight the cases that contributed to that score.)";
   resultsEl.appendChild(softGridLabel);
 
   const tiles = softTiles(result);

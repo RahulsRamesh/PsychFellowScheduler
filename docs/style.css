@@ -275,6 +275,13 @@ select.invalid {
   font-weight: 400;
 }
 
+/* Inputs use `font: inherit`, so inside this label the date box would
+   pick up the label's smaller 0.9rem text. Reset it to the base size so
+   it matches the vacation date inputs and type dropdown in the same row. */
+.research-end-field .fellow-end-date {
+  font-size: 1rem;
+}
+
 .submit-row {
   display: flex;
   justify-content: flex-end;
