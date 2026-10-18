@@ -348,3 +348,18 @@ def test_phd_virtual_every_day_makes_case0_ksads_telehealth(config):
         for v in case["visits"]:
             remote_case0 = case["case_index"] == 0 and v["type"].startswith("KSADS")
             assert v["modality"] == ("telehealth" if remote_case0 else "in-person"), (case["fellow"], case["case_index"], v)
+
+
+
+# ---- 7 (round_double, optimized but not reported): the sample has 4
+# fellows in rounds 0-1 and 3 in rounds 2-3, so the minimum is one
+# supervisor doubled up in each of rounds 0-1, and never the same one ----
+def test_round_double_is_minimal_and_spread(result):
+    groups = {}
+    for c in result["cases"]:
+        groups.setdefault((c["case_index"], c["primary_supervisor"]), []).append(c)
+    extra = {}
+    for (_, name), group in groups.items():
+        extra[name] = extra.get(name, 0) + len(group) - 1
+    assert sum(extra.values()) == 2
+    assert max(extra.values()) == 1

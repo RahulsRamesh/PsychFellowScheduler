@@ -526,6 +526,35 @@ def solve(config: dict, time_limit_s: int = 45):
         penalty_fb_215.append(s5)
         penalty_fb_triple.append(triple)
 
+    # ---- Soft 7: a PhD supervisor shouldn't be doubled up within a case
+    # round ----
+    # Round N is every fellow's case N (case_index N). With more fellows
+    # than PhD supervisors, some round inevitably has a supervisor as
+    # primary for 2+ fellows; each fellow beyond their first in a round is
+    # one unit of extra load. Penalized two ways: the total (so no
+    # supervisor is doubled up needlessly) and the most any one supervisor
+    # carries across all rounds (so the unavoidable doubling is spread out
+    # rather than always landing on the same supervisor). `extra` is only
+    # lower-bounded; minimization keeps it tight. Not reported separately —
+    # its effect shows in supervisor_case_load.
+    by_round = {}
+    for ci, case in enumerate(cases):
+        by_round.setdefault(case["case_index"], []).append(ci)
+    extra_by_sup = {s_name: [] for s_name in SUPERVISOR_INDEX}
+    for r, case_ids in by_round.items():
+        if len(case_ids) < 2:
+            continue
+        for s_name, s_idx in SUPERVISOR_INDEX.items():
+            n = sum(reified_eq(model, primary_var[ci], s_idx, f"round_{r}_{s_name}_{ci}")
+                    for ci in case_ids)
+            extra = model.NewIntVar(0, len(case_ids) - 1, f"round_extra_{r}_{s_name}")
+            model.Add(extra >= n - 1)
+            extra_by_sup[s_name].append(extra)
+    penalty_round_double = [e for es in extra_by_sup.values() for e in es]
+    max_round_double = model.NewIntVar(0, len(cases), "max_round_double")
+    for es in extra_by_sup.values():
+        model.Add(max_round_double >= sum(es))
+
     # Supervisor-related soft rules (1, 2) weighted noticeably higher than
     # positional ones (3, 4) — supervisor continuity matters more to the
     # coordinator than visit ordering. (Rule 8 — supervisor conflict — is
@@ -533,11 +562,14 @@ def solve(config: dict, time_limit_s: int = 45):
     # Any 2-appointment MD day (Soft 4 or 5) costs the same as a positional
     # violation; a 3-Feedback day (Soft 6) outweighs every other soft rule
     # combined short of ~10 supervisor violations — truly a last resort.
+    # Round doubling (Soft 7) is supervisor load, so it shares W_SUP for
+    # both its total and its per-supervisor max.
     W_SUP, W_POS, W_FB_TRIPLE = 10, 1, 100
     model.Minimize(
         W_SUP * (sum(penalty_supervisor_variety) + sum(penalty_ksads3_mismatch))
         + W_POS * (sum(penalty_med_position) + sum(penalty_case_gap) + sum(penalty_fb_215))
         + W_FB_TRIPLE * sum(penalty_fb_triple)
+        + W_SUP * (sum(penalty_round_double) + max_round_double)
     )
 
     solver = cp_model.CpSolver()
