@@ -40,20 +40,18 @@ def reified_eq(model, x, y, name):
 
 def _assign_feedback_times(fb_cases, is_late, has_med):
     """Start time for each Feedback on one date, given that date's MD
-    line-up (Rule 11). Coordinator's preferred layout: a lone Feedback at
-    12:00; a second MD appointment pushes one Feedback to 2:15 (never a
-    back-to-back 12:00 + 12:45); 12:45 only on a 3-Feedback day. A late
-    (Rule 6 escape-valve) Feedback always takes 2:15, and on a Med day any
-    Feedback does. solve()'s per-date counts guarantee these all fit."""
-    late = [ci for ci in fb_cases if is_late[ci]]
-    rest = [ci for ci in fb_cases if not is_late[ci]]
+    line-up (Rule 11). Coordinator's preference order (2026-10-18):
+    12:00, then 12:45, then 2:15 — so two Feedbacks go back-to-back at
+    12:00 + 12:45, and 2:15 is used only when 12:45 isn't free. A late
+    (Rule 6 escape-valve) Feedback always takes 2:15 (the fellow's KSADS1
+    runs until 1:30), and on a Med day any Feedback does (Med runs
+    12:00-1:30). solve()'s per-date counts guarantee these all fit."""
     if has_med:
         return {ci: "14:15" for ci in fb_cases}
-    if len(fb_cases) == 1:
-        return {fb_cases[0]: "14:15" if late else "12:00"}
-    order = rest + late  # late (at most one) always lands last, at 2:15
-    times = ["12:00", "14:15"] if len(fb_cases) == 2 else ["12:00", "12:45", "14:15"]
-    return dict(zip(order, times))
+    rest = [ci for ci in fb_cases if not is_late[ci]]
+    times = dict(zip(rest, ["12:00", "12:45", "14:15"]))
+    times.update({ci: "14:15" for ci in fb_cases if is_late[ci]})  # at most one
+    return times
 
 
 def solve(config: dict, time_limit_s: int = 45):
@@ -496,10 +494,15 @@ def solve(config: dict, time_limit_s: int = 45):
             penalty_case_gap.append(late_feedback_var[a])
             case_gap_info.append((late_feedback_var[a], fellow, cases[a]["case_index"], cases[b]["case_index"]))
 
-    # ---- Soft 5: a Feedback at 2:15 (a second MD appointment that day) ----
-    # Any Monday with 2+ MD appointments puts one Feedback at 2:15. Excludes
-    # the Rule 6 escape valve, which Soft 4 already charges for — so every
-    # 2-appointment day costs exactly 1, whatever caused it.
+    # ---- Soft 5: a second MD appointment that day pushes a Feedback past
+    # noon ----
+    # Any Monday with 2+ MD appointments moves one Feedback off 12:00: to
+    # 12:45 when the other appointment is a Feedback, to 2:15 when it's a
+    # Med. Kept under its original "feedback_215" key even though, since
+    # 12:45 became preferred over 2:15 (2026-10-18), it now also counts the
+    # 12:45 one. Excludes the Rule 6 escape valve, which Soft 4 already
+    # charges for — so every 2-appointment day costs exactly 1, whatever
+    # caused it.
     #
     # Soft 6: a 3-Feedback day (12:00 + 12:45 + 2:15) — last resort.
     #
@@ -654,10 +657,16 @@ def solve(config: dict, time_limit_s: int = 45):
     for d, fb_cases in fb_by_date.items():
         fb_time.update(_assign_feedback_times(fb_cases, is_late, d in med_dates))
 
+    # Soft 5: the (non-escape-valve) Feedback a second MD appointment
+    # pushed off noon — the 2:15 one on a Med or 3-Feedback day, or the
+    # 12:45 one on a plain 2-Feedback day. (A triple day's 12:45 is Soft
+    # 6's; a 2-Feedback day with an escape-valve Feedback is Soft 4's.)
     fb_215_details = [
         {"fellow": case["fellow"], "case_index": case["case_index"]}
         for ci, case in enumerate(cases)
-        if fb_time[ci] == "14:15" and not is_late[ci]
+        if not is_late[ci] and (
+            fb_time[ci] == "14:15"
+            or (fb_time[ci] == "12:45" and len(fb_by_date[solver.Value(date_var[ci, "Feedback"])]) == 2))
     ]
 
     # fb_triple: one entry per case whose Feedback shares a 3-Feedback day

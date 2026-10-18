@@ -225,7 +225,7 @@ def test_case_gap_matches_late_feedback_escape_valve(result):
     ([0], {0}, False, {0: "14:15"}),                                     # lone late Feedback
     ([0], set(), True, {0: "14:15"}),                                    # Med + Feedback
     ([0], {0}, True, {0: "14:15"}),                                      # Med + late Feedback
-    ([0, 1], set(), False, {0: "12:00", 1: "14:15"}),                    # 2 Feedbacks: never 12:45
+    ([0, 1], set(), False, {0: "12:00", 1: "12:45"}),                    # 2 Feedbacks: back-to-back
     ([0, 1], {0}, False, {1: "12:00", 0: "14:15"}),                      # late one takes 2:15
     ([0, 1, 2], set(), False, {0: "12:00", 1: "12:45", 2: "14:15"}),     # triple day
     ([0, 1, 2], {0}, False, {1: "12:00", 2: "12:45", 0: "14:15"}),       # triple, late takes 2:15
@@ -248,17 +248,23 @@ def _next_case_ksads1_dates(result):
     return out
 
 
-# ---- 5 (feedback_215): exactly the 2:15 Feedbacks that aren't the
-# Rule 6 escape valve (which case_gap already counts) ----
+# ---- 5 (feedback_215): exactly the Feedbacks a second MD appointment
+# pushed off noon — every 2:15, plus the 12:45 on a 2-Feedback day — that
+# aren't the Rule 6 escape valve (which case_gap already counts) ----
 def test_feedback_215_matches_times(result):
     details = result["soft_violation_details"]["feedback_215 (soft #5)"]
     count = result["soft_violations"]["feedback_215 (soft #5)"]
     next_k1 = _next_case_ksads1_dates(result)
+    fbs_per_day = {}
+    for case in result["cases"]:
+        d = visit_of(case, "Feedback")["date"]
+        fbs_per_day[d] = fbs_per_day.get(d, 0) + 1
     expected = set()
     for case in result["cases"]:
         fb = visit_of(case, "Feedback")
         key = (case["fellow"], case["case_index"])
-        if fb["time"] == "14:15" and next_k1.get(key) != fb["date"]:
+        pushed = fb["time"] == "14:15" or (fb["time"] == "12:45" and fbs_per_day[fb["date"]] == 2)
+        if pushed and next_k1.get(key) != fb["date"]:
             expected.add(key)
     assert {(e["fellow"], e["case_index"]) for e in details} == expected
     assert count == len(expected)

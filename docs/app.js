@@ -688,7 +688,7 @@ form.addEventListener("submit", (e) => {
 // The solver scores case overlap (soft #4) and 2:15 Feedback (soft #5)
 // separately, but both just mean "a Feedback got pushed later than noon",
 // so they're shown as one display-only tile whose count is every Feedback
-// with a start time after 12:00 (2:15, and 12:45 on a 3-Feedback day).
+// with a start time after 12:00 (12:45 or 2:15).
 const MODIFIED_FEEDBACK_KEY = "modified_feedback_time";
 const MERGED_INTO_MODIFIED_FEEDBACK = ["case_gap (soft #4)", "feedback_215 (soft #5)"];
 

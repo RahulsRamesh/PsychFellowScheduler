@@ -270,16 +270,34 @@ def test_rule11_invalid_time(clean_result, config):
 
 
 def test_solver_feedback_times_follow_preferences(clean_result):
-    # Independent check of the solver's slot choices: 12:45 only ever
-    # appears on a 3-Feedback day (2 Feedbacks go 12:00 + 2:15).
+    # Independent check of the solver's slot choices (preference order
+    # 12:00, 12:45, 2:15): a Feedback is at 12:45 only behind a 12:00
+    # Feedback, and at 2:15 only when 12:45 isn't usable — a Med that day,
+    # 12:00 and 12:45 both taken, or the fellow's own next KSADS1 at noon
+    # (the Rule 6 escape valve).
+    next_k1 = {}
+    by_fellow = {}
+    for c in clean_result["cases"]:
+        by_fellow.setdefault(c["fellow"], []).append(c)
+    for fcases in by_fellow.values():
+        fcases.sort(key=lambda c: c["case_index"])
+        for a, b in zip(fcases, fcases[1:]):
+            next_k1[a["fellow"], a["case_index"]] = visit_of(b, "KSADS1")["date"]
     by_date = {}
     for c, v in _md_visits(clean_result):
-        by_date.setdefault(v["date"], []).append(v)
-    for d, vs in by_date.items():
-        fbs = [v for v in vs if v["type"] == "Feedback"]
-        for v in fbs:
+        by_date.setdefault(v["date"], []).append((c, v))
+    for d, entries in by_date.items():
+        times = {v["time"] for _, v in entries if v["type"] == "Feedback"}
+        has_med = any(v["type"] == "Med" for _, v in entries)
+        for c, v in entries:
+            if v["type"] != "Feedback":
+                continue
             if v["time"] == "12:45":
-                assert len(fbs) == 3, f"12:45 Feedback on {d} without a 3-Feedback day: {vs}"
+                assert "12:00" in times and not has_med, f"12:45 Feedback on {d} with 12:00 free: {entries}"
+            if v["time"] == "14:15":
+                escape_valve = next_k1.get((c["fellow"], c["case_index"])) == d
+                assert has_med or escape_valve or {"12:00", "12:45"} <= times, (
+                    f"2:15 Feedback on {d} while 12:45 was free: {entries}")
 
 
 def test_rule3_research_fellow_after_end_date(clean_result, config):
