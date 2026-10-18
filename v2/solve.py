@@ -555,21 +555,22 @@ def solve(config: dict, time_limit_s: int = 45):
     for es in extra_by_sup.values():
         model.Add(max_round_double >= sum(es))
 
-    # Supervisor-related soft rules (1, 2) weighted noticeably higher than
-    # positional ones (3, 4) — supervisor continuity matters more to the
-    # coordinator than visit ordering. (Rule 8 — supervisor conflict — is
-    # NOT part of this objective at all now; it's a hard forbid above.)
-    # Any 2-appointment MD day (Soft 4 or 5) costs the same as a positional
-    # violation; a 3-Feedback day (Soft 6) outweighs every other soft rule
-    # combined short of ~10 supervisor violations — truly a last resort.
-    # Round doubling (Soft 7) is supervisor load, so it shares W_SUP for
-    # both its total and its per-supervisor max.
-    W_SUP, W_POS, W_FB_TRIPLE = 10, 1, 100
+    # Coordinator's priority order (2026-10-18), least to most important:
+    #   1    Med position (Soft 3), supervisor variety (Soft 2)
+    #   10   any 2-appointment MD day — escape-valve case gap (Soft 4) or
+    #        2:15 Feedback (Soft 5)
+    #   100  KSADS3 supervisor mismatch (Soft 1)
+    #   1000 3-Feedback day (Soft 6), round doubling (Soft 7) — last resorts
+    # Round doubling's weight applies to both its total and its per-
+    # supervisor max. (Rule 8 — supervisor conflict — is NOT part of this
+    # objective at all; it's a hard forbid above.)
+    W_LOW, W_MD_DAY, W_KSADS3, W_LAST_RESORT = 1, 10, 100, 1000
     model.Minimize(
-        W_SUP * (sum(penalty_supervisor_variety) + sum(penalty_ksads3_mismatch))
-        + W_POS * (sum(penalty_med_position) + sum(penalty_case_gap) + sum(penalty_fb_215))
-        + W_FB_TRIPLE * sum(penalty_fb_triple)
-        + W_SUP * (sum(penalty_round_double) + max_round_double)
+        W_LOW * (sum(penalty_med_position) + sum(penalty_supervisor_variety))
+        + W_MD_DAY * (sum(penalty_case_gap) + sum(penalty_fb_215))
+        + W_KSADS3 * sum(penalty_ksads3_mismatch)
+        + W_LAST_RESORT * (sum(penalty_fb_triple)
+                           + sum(penalty_round_double) + max_round_double)
     )
 
     solver = cp_model.CpSolver()
