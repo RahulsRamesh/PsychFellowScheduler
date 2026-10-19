@@ -102,7 +102,16 @@ auto-detects `localhost`/`127.0.0.1` and points at the local API.
   `solve()`'s full output (status, per-rule soft-violation breakdown,
   per-supervisor case load, and the schedule itself) and
   `hard_rule_violations` is the independent verifier's output (empty list
-  = clean).
+  = clean). If no schedule satisfies every hard rule, the solver retries
+  once allowing Med visits at 4pm (the one hard rule allowed to bend, as a
+  last resort) and lists each one it moved in `result.med_4pm` — empty
+  whenever the strict solve succeeded. If that also fails, it returns the
+  closest *partial* schedule (`result.partial: true`): it never
+  double-books a fellow, breaks as few vacations/research end dates as it
+  can, then as few other hard rules, and keeps any visits past a research
+  end date as close to it as possible. `hard_rule_violations` then lists
+  exactly what it breaks, as the coordinator's starting point for fixing
+  it by hand.
 
 ## Frontend
 

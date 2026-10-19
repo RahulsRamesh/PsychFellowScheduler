@@ -336,10 +336,18 @@ def test_md_virtual_every_day_makes_case0_med_feedback_telehealth(config):
 
 def test_everyone_virtual_every_day_is_infeasible(config):
     # Every case-0 visit would be telehealth, breaking Rule 9 (>=1
-    # in-person per case) — so no schedule exists.
+    # in-person per case) — so no valid schedule exists, and pass 3's
+    # partial schedule breaks exactly that: Rule 9 once per case-0 case.
+    from v2.solve import _solve_once
+    from v2.verify import verify_schedule
     whole = [[config["clinic_start"], config["clinic_end"]]]
     cfg = _with_virtual(config, Horstmann=whole, Walshaw=whole, Ellis=whole)
-    assert solve(cfg, time_limit_s=20)["status"] == "INFEASIBLE"
+    assert _solve_once(cfg, 20, allow_4pm_med=True)["status"] == "INFEASIBLE"
+    r = solve(cfg, time_limit_s=20)
+    assert r["partial"]
+    violations = verify_schedule(cfg, r)
+    assert len(violations) == len(config["fellows"])
+    assert all(v.startswith("Rule 9:") for v in violations), violations
 
 
 def test_phd_virtual_every_day_makes_case0_ksads_telehealth(config):
@@ -369,3 +377,92 @@ def test_round_double_is_minimal_and_spread(result):
         extra[name] = extra.get(name, 0) + len(group) - 1
     assert sum(extra.values()) == 2
     assert max(extra.values()) == 1
+
+
+# ---- 4pm Med fallback (2026-10-19): pass 2 runs only when the strict
+# model is INFEASIBLE, and moves as few Meds to 4:00 as it can ----
+def test_strict_schedule_never_uses_4pm(result):
+    assert result["med_4pm"] == []
+    assert all(v["time"] == "12:00" for c in result["cases"] for v in c["visits"]
+               if v["type"] == "Med")
+
+
+@pytest.fixture(scope="module")
+def md_squeezed_config(config):
+    # The MD also away Jul 20, Jul 27 and Aug 24 leaves too few noon Med
+    # slots before Research Fellow D's end date — strictly infeasible, but
+    # one Med at 4pm fits.
+    import copy
+    cfg = copy.deepcopy(config)
+    md = next(s for s in cfg["supervisors"] if s["role"] == "MD")
+    md["vacations"] += [[d, d] for d in ("2026-07-20", "2026-07-27", "2026-08-24")]
+    return cfg
+
+
+def test_strict_pass_infeasible_when_md_squeezed(md_squeezed_config):
+    from v2.solve import _solve_once
+    assert _solve_once(md_squeezed_config, 20, allow_4pm_med=False)["status"] == "INFEASIBLE"
+
+
+def test_4pm_fallback_rescues_infeasible(md_squeezed_config):
+    from v2.verify import verify_schedule
+    r = solve(md_squeezed_config)
+    assert r["status"] in ("OPTIMAL", "FEASIBLE")
+    assert len(r["med_4pm"]) == 1  # the fewest that fit
+    assert verify_schedule(md_squeezed_config, r) == []
+    at_4pm = [(c["fellow"], c["case_index"], v["date"]) for c in r["cases"] for v in c["visits"]
+              if v["type"] == "Med" and v["time"] == "16:00"]
+    assert at_4pm == [(e["fellow"], e["case_index"], e["date"]) for e in r["med_4pm"]]
+
+
+# ---- Partial schedule (pass 3): when even 4pm Meds can't fit every hard
+# rule, return the best-fitting schedule anyway, flagged `partial` ----
+def test_strict_schedule_is_not_partial(result):
+    assert result["partial"] is False
+
+
+def test_partial_schedule_when_no_valid_one_exists(config):
+    # A research end date of Aug 10 leaves 4 usable Mondays for 10 visits
+    # (each case needs 5 distinct dates), so at least 6 must land after it.
+    import copy
+    from v2.solve import _solve_once
+    from v2.verify import verify_schedule
+    cfg = copy.deepcopy(config)
+    next(f for f in cfg["fellows"] if f["type"] == "research")["end_date"] = "2026-08-10"
+    assert _solve_once(cfg, 20, allow_4pm_med=True)["status"] == "INFEASIBLE"
+    r = solve(cfg)
+    assert r["status"] in ("OPTIMAL", "FEASIBLE") and r["partial"]
+    violations = verify_schedule(cfg, r)
+    assert len(violations) == 6
+    assert all(v.startswith("Rule 3: Research Fellow D") and "research end date" in v
+               for v in violations), violations
+
+
+def test_partial_end_date_visits_cluster_after_it(config):
+    # The 6 visits that must land after the Aug 10 end date take the
+    # earliest Mondays they can — Aug 17/24, then (skipping the fellow's
+    # Aug 31 vacation and the Sep 7 holiday) Sep 14/21/28 — rather than
+    # anywhere in the rest of the clinic.
+    import copy
+    cfg = copy.deepcopy(config)
+    next(f for f in cfg["fellows"] if f["type"] == "research")["end_date"] = "2026-08-10"
+    r = solve(cfg)
+    dates = [v["date"] for c in r["cases"] if c["fellow"] == "Research Fellow D"
+             for v in c["visits"]]
+    assert max(dates) <= "2026-09-28", sorted(dates)
+
+
+def test_partial_breaks_only_breakable_rules(config):
+    # The MD away all August leaves no valid schedule. The partial one may
+    # break rules 3/6/8/9/11 — but never double-books a fellow (Rule 7).
+    import copy
+    from v2.verify import verify_schedule
+    cfg = copy.deepcopy(config)
+    md = next(s for s in cfg["supervisors"] if s["role"] == "MD")
+    md["vacations"].append(["2026-08-01", "2026-08-31"])
+    r = solve(cfg)
+    assert r["partial"]
+    violations = verify_schedule(cfg, r)
+    assert violations
+    breakable = ("Rule 3:", "Rule 6:", "Rule 8:", "Rule 9:", "Rule 11:")
+    assert all(v.startswith(breakable) for v in violations), violations

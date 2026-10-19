@@ -265,8 +265,29 @@ def test_rule11_two_feedbacks_same_slot(clean_result, config):
 
 def test_rule11_invalid_time(clean_result, config):
     bad = copy.deepcopy(clean_result)
-    visit_of(case_of(bad, "Fellow A", 0), "Med")["time"] = "14:15"  # Med is noon-only
+    visit_of(case_of(bad, "Fellow A", 0), "Med")["time"] = "14:15"  # Med is noon or 4pm only
     assert_rule_flagged(verify_schedule(config, bad), 11)
+
+
+def _two_meds_same_day(clean_result, second_time):
+    bad = copy.deepcopy(clean_result)
+    med_a = visit_of(case_of(bad, "Fellow A", 0), "Med")
+    med_b = visit_of(case_of(bad, "Fellow B", 0), "Med")
+    med_b["date"], med_b["time"] = med_a["date"], second_time
+    return bad
+
+
+def test_rule8_two_noon_meds_same_day(clean_result, config):
+    assert_rule_flagged(verify_schedule(config, _two_meds_same_day(clean_result, "12:00")), 8)
+
+
+def test_noon_and_4pm_med_same_day_ok(clean_result, config):
+    # The 4pm fallback Med (16:00-17:30) clashes with nothing at noon.
+    # Scoped to this pair: the move may incidentally break Fellow B's case
+    # order or land on a vacation.
+    violations = verify_schedule(config, _two_meds_same_day(clean_result, "16:00"))
+    assert not [v for v in violations if v.startswith(("Rule 8:", "Rule 11:"))
+                and "Fellow A case 0/Med" in v and "Fellow B case 0/Med" in v]
 
 
 def test_solver_feedback_times_follow_preferences(clean_result):
@@ -323,9 +344,12 @@ def test_rule3_research_end_date_is_inclusive(clean_result, config):
 
 def test_rule10_virtual_day_case0_must_be_telehealth(clean_result, config):
     # Mark the MD virtual on a case-0 Med's date: that Med must now be
-    # telehealth, so the (unchanged, in-person) result is flagged.
+    # telehealth, so the (unchanged, in-person) result is flagged. Any
+    # in-person one: which case-0 Med already sits on the MD's configured
+    # virtual day (already telehealth) varies with solver tie-breaking.
     cfg = copy.deepcopy(config)
-    med = visit_of(case_of(clean_result, "Fellow A", 0), "Med")
+    med = next(v for c in clean_result["cases"] if c["case_index"] == 0
+               for v in c["visits"] if v["type"] == "Med" and v["modality"] == "in-person")
     md = next(s for s in cfg["supervisors"] if s["role"] == "MD")
     md["virtual_days"] = md.get("virtual_days", []) + [[med["date"], med["date"]]]
     violations = verify_schedule(cfg, clean_result)
@@ -340,3 +364,13 @@ def test_rule10_virtual_day_later_case_stays_in_person(clean_result, config):
     md = next(s for s in cfg["supervisors"] if s["role"] == "MD")
     md["virtual_days"] = md.get("virtual_days", []) + [[med["date"], med["date"]]]
     assert not [v for v in verify_schedule(cfg, clean_result) if v.startswith("Rule 10:")]
+
+
+def test_rule7_noon_feedback_beside_fellows_other_visit(clean_result, config):
+    # Rule 7 covers Feedback too: only the 2:15 escape-valve Feedback may
+    # share a date with the fellow's next noon visit.
+    bad = copy.deepcopy(clean_result)
+    fb = visit_of(case_of(bad, "Fellow A", 1), "Feedback")
+    k1 = visit_of(case_of(bad, "Fellow A", 2), "KSADS1")
+    fb["date"], fb["time"] = k1["date"], "12:00"
+    assert_rule_flagged(verify_schedule(config, bad), 7)

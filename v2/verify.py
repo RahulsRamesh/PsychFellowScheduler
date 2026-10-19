@@ -132,24 +132,28 @@ def verify_schedule(config: dict, result: dict) -> list:
                         f"({v['date']}) is not after case {a['case_index']}'s "
                         f"Feedback ({fb_date_a})")
 
-    # ---- Rule 7: no fellow double-booked (non-Feedback) same date ----
+    # ---- Rule 7: no fellow double-booked same date ----
+    # A clash is a same-date pair whose reported times overlap — every
+    # KSADS/Med is at noon, except a 4pm-fallback Med, which clashes with
+    # nothing at noon. Feedback counts too: the Rule 6 escape valve's 2:15
+    # Feedback clears the next case's noon KSADS1, but a noon Feedback
+    # beside another of the fellow's visits is a real double-booking.
     for fname, fcases in by_fellow.items():
         seen = {}
         for case in fcases:
             for v in case["visits"]:
-                if v["type"] == "Feedback":
-                    continue
-                d = v["date"]
-                if d in seen:
-                    violations.append(
-                        f"Rule 7: {fname} double-booked on {d}: "
-                        f"case {seen[d][0]}/{seen[d][1]} and case {case['case_index']}/{v['type']}")
-                else:
-                    seen[d] = (case["case_index"], v["type"])
+                for other_ci, other in seen.get(v["date"], []):
+                    if _overlaps(v, other):
+                        violations.append(
+                            f"Rule 7: {fname} double-booked on {v['date']}: "
+                            f"case {other_ci}/{other['type']} and case {case['case_index']}/{v['type']}")
+                seen.setdefault(v["date"], []).append((case["case_index"], v))
 
     # ---- Rule 8: no supervisor double-booked (non-Feedback) same date ----
     # Rebuilt entirely from the output's own reported `supervisor` field per
     # visit — never assumes who was supposed to run a visit.
+    # Same time-overlap test as Rule 7, so the MD's noon Med and a 4pm-
+    # fallback Med on one date aren't a clash.
     sup_seen = {}
     for case in cases:
         for v in case["visits"]:
@@ -158,14 +162,13 @@ def verify_schedule(config: dict, result: dict) -> list:
             sup = v.get("supervisor")
             d = v["date"]
             key = (sup, d)
-            if key in sup_seen:
-                other = sup_seen[key]
-                violations.append(
-                    f"Rule 8: {sup} double-booked on {d}: "
-                    f"{other[0]} case {other[1]}/{other[2]} and "
-                    f"{case['fellow']} case {case['case_index']}/{v['type']}")
-            else:
-                sup_seen[key] = (case["fellow"], case["case_index"], v["type"])
+            for other_fellow, other_ci, other in sup_seen.get(key, []):
+                if _overlaps(v, other):
+                    violations.append(
+                        f"Rule 8: {sup} double-booked on {d}: "
+                        f"{other_fellow} case {other_ci}/{other['type']} and "
+                        f"{case['fellow']} case {case['case_index']}/{v['type']}")
+            sup_seen.setdefault(key, []).append((case["fellow"], case["case_index"], v))
 
     # ---- Rule 10 (updated 2026-10-01): modality defaults to in-person;
     # the only telehealth exception is a visit in a case_index==0 case
@@ -199,7 +202,7 @@ def verify_schedule(config: dict, result: dict) -> list:
     for case in cases:
         for v in case["visits"]:
             t = v.get("time")
-            allowed = FEEDBACK_TIMES if v["type"] == "Feedback" else ("12:00",)
+            allowed = {"Feedback": FEEDBACK_TIMES, "Med": MED_TIMES}.get(v["type"], ("12:00",))
             if t not in allowed:
                 violations.append(
                     f"Rule 11: {case['fellow']} case {case['case_index']} {v['type']} "
@@ -221,6 +224,9 @@ def verify_schedule(config: dict, result: dict) -> list:
 
 
 FEEDBACK_TIMES = ("12:00", "12:45", "14:15")
+# 16:00 is the last-resort fallback (see solve.py's solve()) — legal, but
+# solve() reports every one in its result's `med_4pm` list.
+MED_TIMES = ("12:00", "16:00")
 
 
 def _minutes(visit):

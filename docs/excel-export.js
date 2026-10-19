@@ -78,6 +78,7 @@ function availabilityText(label, vacations, virtualDays, config) {
 function visitDateText(v, c, phdFullName) {
   let text = longDate(v.date);
   if (v.type === "Feedback") text += ` @${XL_FEEDBACK_TIMES[v.time] || v.time || "12PM"}`;
+  if (v.type === "Med" && v.time === "16:00") text += " @4PM";
   if (v.modality === "telehealth") text += " telehealth";
   if (v.type === "KSADS3" && v.supervisor !== c.primary_supervisor) {
     text += ` (${initials(phdFullName(v.supervisor))})`;

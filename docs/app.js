@@ -654,7 +654,7 @@ async function runSolve(config) {
     const body = await response.json();
 
     if (body.result.status === "INFEASIBLE") {
-      showError("No valid schedule could be found with these inputs. This usually means vacation or holiday dates leave too little room for the hard scheduling rules to be satisfied. Try adjusting vacation dates and solving again.");
+      showError("No schedule could be built with these inputs — not even a partial one. This means the clinic doesn't have enough Mondays (after holidays) to fit every fellow's appointments without double-booking them. Check the clinic start/end dates and holidays, then try again.");
       return;
     }
 
@@ -801,17 +801,22 @@ const MODALITY_LABELS = { "in-person": "In-person", "telehealth": "Telehealth" }
 
 // Every Feedback gets a start-time badge (see solve.py Rule 11). 12pm is
 // the normal time, so its badge is neutral; 12:45 and 2:15 mean the
-// Feedback was pushed later and keep the amber warning style. Other visit
-// types are always at noon and get no badge.
+// Feedback was pushed later and keep the amber warning style. A Med gets
+// a badge only when the last-resort fallback moved it to 4pm (red — it
+// breaks a hard rule). Other visit types are always at noon.
 const TIME_BADGES = {
   "12:00": { text: "12pm", title: "Feedback is at the standard 12pm time.", neutral: true },
   "12:45": { text: "12:45pm", title: "Appointment is moved to 12:45pm to accommodate multiple same-day appointments." },
   "14:15": { text: "2:15pm", title: "Appointment is pushed back to accommodate a same day appointment." },
 };
+const MED_4PM_BADGE = { text: "4pm", title: "Last resort: no schedule fits every hard rule, so this Med visit is moved to 4pm." };
 
 // Results saved before visits carried a `time` field only had a `late`
 // flag (2:15) — treat any other legacy Feedback as noon.
 function timeBadge(v) {
+  if (v.type === "Med" && v.time === "16:00") {
+    return ` <span class="late-badge broken" title="${MED_4PM_BADGE.title}">${MED_4PM_BADGE.text}</span>`;
+  }
   if (v.type !== "Feedback") return "";
   const b = TIME_BADGES[v.time || (v.late ? "14:15" : "12:00")];
   if (!b) return "";
@@ -968,6 +973,83 @@ function renderSchedule(container, cases, groupBy) {
   });
 }
 
+// Coordinator-facing names for the verifier's hard rules (see
+// v2/verify.py), used to group a partial schedule's violations.
+const HARD_RULE_LABELS = {
+  1: "Visit not on a Monday",
+  2: "Visit on a holiday",
+  3: "Visit during a vacation or after a research end date",
+  4: "KSADS visits out of order",
+  5: "Feedback not the last visit in its case",
+  6: "A fellow's cases overlap",
+  7: "Fellow double-booked",
+  8: "Supervisor double-booked",
+  9: "Case has no in-person visit",
+  10: "Wrong modality (in-person/telehealth)",
+  11: "MD time slots overlap",
+};
+
+// The verifier's messages use 0-based case numbers ("case 0") and ISO
+// dates; the page shows "Case 1" and MM/DD/YYYY. Display-only rewrite.
+function friendlyViolation(text) {
+  return text
+    .replace(/^Rule \d+: /, "")
+    .replace(/\bcase (\d+)/g, (_, n) => `Case ${Number(n) + 1}`)
+    .replace(/\b(\d{4}-\d{2}-\d{2})\b/g, (iso) => formatDate(iso));
+}
+
+// The "hard rules broken" box: 4pm Meds (pass 2/3) plus, for a partial
+// schedule, the verifier's violations grouped by rule — the coordinator's
+// to-do list for fixing it by hand.
+function brokenRulesBox(med4pm, violations, partial) {
+  const box = document.createElement("div");
+  box.className = "broken-rules";
+
+  const intro = document.createElement("p");
+  intro.textContent = partial
+    ? "No schedule satisfies every hard rule with these inputs, even with Med visits moved to 4pm. Below is the closest schedule the solver could find — use it as a starting point and resolve each item below by hand. It never double-books a fellow, avoids vacations and research end dates wherever possible, and otherwise breaks as few hard rules as it can."
+    : "No schedule satisfies every hard rule with these inputs, so as a last resort the following Med visits are scheduled at 4pm instead of 12pm. Every other rule is met.";
+  box.appendChild(intro);
+
+  const groups = [];
+  if (med4pm.length > 0) {
+    groups.push(["Med visit moved to 4pm",
+      med4pm.map((m) => `${m.fellow}, Case ${m.case_index + 1} — Med Visit on ${formatDate(m.date)} at 4pm`)]);
+  }
+  const byRule = new Map();
+  violations.forEach((v) => {
+    const match = v.match(/^Rule (\d+):/);
+    const rule = match ? Number(match[1]) : 0;
+    if (!byRule.has(rule)) byRule.set(rule, []);
+    byRule.get(rule).push(friendlyViolation(v));
+  });
+  [...byRule.keys()].sort((a, b) => a - b).forEach((rule) => {
+    groups.push([HARD_RULE_LABELS[rule] || "Other", byRule.get(rule)]);
+  });
+
+  const total = groups.reduce((n, [, items]) => n + items.length, 0);
+  const summary = document.createElement("p");
+  const strong = document.createElement("strong");
+  strong.textContent = `Hard rules broken: ${total}`;
+  summary.appendChild(strong);
+  box.appendChild(summary);
+
+  groups.forEach(([label, items]) => {
+    const heading = document.createElement("p");
+    heading.className = "broken-rule-heading";
+    heading.textContent = `${label} (${items.length})`;
+    box.appendChild(heading);
+    const ul = document.createElement("ul");
+    items.forEach((text) => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  });
+  return box;
+}
+
 // `config` is the exact input that was solved — the Excel export needs
 // its holidays/vacations/virtual days. Results saved before it was stored
 // alongside them don't have it; the export then falls back to the
@@ -976,23 +1058,41 @@ function renderResults(result, hardRuleViolations, config) {
   resultsEl.innerHTML = "";
   resultsEl.hidden = false;
 
-  const statusClass = result.status === "OPTIMAL" ? "optimal" : "feasible";
-  const statusLabel = result.status === "OPTIMAL" ? "Optimal schedule found" : "Feasible schedule found (close to optimal - adjusting dates may allow for a more optimal schedule)";
+  // Results saved before the fallbacks existed have no med_4pm / partial.
+  const med4pm = result.med_4pm || [];
+  const partial = Boolean(result.partial);
+  let statusClass = result.status === "OPTIMAL" ? "optimal" : "feasible";
+  let statusLabel = result.status === "OPTIMAL" ? "Optimal schedule found" : "Feasible schedule found (close to optimal - adjusting dates may allow for a more optimal schedule)";
+  if (partial) {
+    statusClass = "infeasible";
+    statusLabel = "No feasible schedule exists — showing the closest partial schedule";
+  } else if (med4pm.length > 0) {
+    statusClass = "infeasible";
+    statusLabel = "No schedule fits every hard rule — showing the best possible schedule";
+  }
   const statusBadge = document.createElement("span");
   statusBadge.className = `status-badge ${statusClass}`;
   statusBadge.textContent = statusLabel;
   resultsEl.appendChild(statusBadge);
 
-  const verifyLine = document.createElement("p");
-  if (hardRuleViolations.length === 0) {
-    verifyLine.className = "verify-line ok";
-    verifyLine.textContent = "✓ All hard scheduling rules verified.";
-  } else {
-    verifyLine.className = "verify-line bad";
-    verifyLine.innerHTML = "If you are seeing this, please report it to Rahul:<br>" +
-      hardRuleViolations.map((v) => `• ${v}`).join("<br>");
+  if (partial || med4pm.length > 0) {
+    resultsEl.appendChild(brokenRulesBox(med4pm, partial ? hardRuleViolations : [], partial));
   }
-  resultsEl.appendChild(verifyLine);
+
+  // A partial schedule's violations are expected — they're the list
+  // above, not a bug to report.
+  if (!partial) {
+    const verifyLine = document.createElement("p");
+    if (hardRuleViolations.length === 0) {
+      verifyLine.className = "verify-line ok";
+      verifyLine.textContent = "✓ All hard scheduling rules verified.";
+    } else {
+      verifyLine.className = "verify-line bad";
+      verifyLine.innerHTML = "If you are seeing this, please report it to Rahul:<br>" +
+        hardRuleViolations.map((v) => `• ${v}`).join("<br>");
+    }
+    resultsEl.appendChild(verifyLine);
+  }
 
   const exportRow = document.createElement("div");
   exportRow.className = "data-tools export-row";

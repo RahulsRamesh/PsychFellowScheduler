@@ -11,11 +11,14 @@ softened because supervisors were fixed, historically-assigned input.
 
 Rule numbers below refer to the hard/soft rule list in claude_code_prompt.md.
 Hard rules 1-11 must never be violated (solver returns INFEASIBLE rather
-than break them). Soft rules 1-6 are penalized in the objective.
+than break them). Soft rules 1-6 are penalized in the objective. The one
+exception is the 4pm Med fallback (see solve()): only when no schedule
+satisfies every hard rule may Rule 11 move Med visits to 4:00.
 """
 
 import datetime
 import os
+import time
 
 from ortools.sat.python import cp_model
 
@@ -45,16 +48,62 @@ def _assign_feedback_times(fb_cases, is_late, has_med):
     12:00 + 12:45, and 2:15 is used only when 12:45 isn't free. A late
     (Rule 6 escape-valve) Feedback always takes 2:15 (the fellow's KSADS1
     runs until 1:30), and on a Med day any Feedback does (Med runs
-    12:00-1:30). solve()'s per-date counts guarantee these all fit."""
+    12:00-1:30). solve()'s per-date counts guarantee these all fit — except
+    in a partial (pass 3) schedule, where any overflow also takes 2:15 and
+    the verifier reports the clash."""
     if has_med:
         return {ci: "14:15" for ci in fb_cases}
+    slots = ["12:00", "12:45", "14:15"]
     rest = [ci for ci in fb_cases if not is_late[ci]]
-    times = dict(zip(rest, ["12:00", "12:45", "14:15"]))
+    times = {ci: slots[min(i, 2)] for i, ci in enumerate(rest)}
     times.update({ci: "14:15" for ci in fb_cases if is_late[ci]})  # at most one
     return times
 
 
 def solve(config: dict, time_limit_s: int = 45):
+    """Up to three passes, sharing one time budget. Pass 1 is the strict
+    model — every hard rule as written. Only if it's proven INFEASIBLE
+    does pass 2 run: the same model, except a Med may move from 12:00 to
+    4:00 (the coordinator's last resort, 2026-10-19), penalized above
+    every soft rule so it uses as few 4pm Meds as possible. A pass 1
+    TIMEOUT doesn't trigger pass 2 — it isn't proof that no strict
+    schedule exists, and a 4pm Med must never stand in for one that does.
+
+    If pass 2 also returns nothing, pass 3 builds a partial schedule — the
+    best-fitting one, breaking as few hard rules as it can (see
+    relax_hard in _solve_once) — so the coordinator still gets a starting
+    point to fix by hand. Its result has `partial: True`; the verifier's
+    violation list is the to-do list of what it breaks."""
+    started = time.monotonic()
+
+    def remaining(floor=1):
+        return max(floor, int(time_limit_s - (time.monotonic() - started)))
+
+    result = _solve_once(config, time_limit_s, allow_4pm_med=False)
+    if result["status"] != "INFEASIBLE":
+        return result
+    result = _solve_once(config, remaining(), allow_4pm_med=True)
+    if result["status"] != "INFEASIBLE" and result["status"] != "TIMEOUT":
+        return result
+    # Always give pass 3 some time of its own: by now there's no valid
+    # schedule to wait for, and returning nothing is the outcome to avoid.
+    return _solve_once(config, remaining(floor=15), allow_4pm_med=True, relax_hard=True)
+
+
+def _empty_result(status):
+    return {"status": status, "partial": False, "cases": [], "soft_violations": {},
+            "soft_violation_details": {}, "supervisor_case_load": {}, "med_4pm": []}
+
+
+def _solve_once(config: dict, time_limit_s: int, allow_4pm_med: bool, relax_hard: bool = False):
+    """One solve. relax_hard (pass 3 only) turns hard rules 3, 6, 8, 9 and
+    11 into penalties that outweigh everything else — a broken hard rule
+    costs more than every 4pm Med and soft rule combined, and a Rule 3
+    (availability) break more than any number of the others — so the
+    result is the schedule with the fewest broken hard rules. Rules 1-2
+    (Monday-only, no holidays), 4-5 (order within a case), 7 (the fellow
+    is never double-booked) and the case templates stay hard: breaking
+    them wouldn't give the coordinator a usable starting point."""
     # config may still carry a v1-era `case_supervisors` key (e.g. if the
     # caller reuses config_from_real_data.json as-is) — it's unused input
     # now that supervisor is solved for, not fixed. Ignore it rather than
@@ -74,6 +123,9 @@ def solve(config: dict, time_limit_s: int = 45):
     fellows = {f["name"]: f for f in config["fellows"]}
     supervisors = {s["name"]: s for s in config["supervisors"]}
     fellow_vacation = {name: expand_ranges(f["vacations"]) for name, f in fellows.items()}
+    # Kept apart for pass 3, where a vacation and a post-end-date visit are
+    # separate breaks (as the verifier reports them) even on the same day.
+    fellow_own_vacation = {name: set(days) for name, days in fellow_vacation.items()}
 
     # Research fellows finish before the clinic does: their optional
     # (inclusive) end_date blocks every later day, reusing the vacation
@@ -135,29 +187,83 @@ def solve(config: dict, time_limit_s: int = 45):
     case_fellow_allowed = {}  # case_id -> list of Monday indices allowed for the fellow alone
     case_md_allowed = {}  # case_id -> Monday indices allowed for Med/Feedback (fellow + MD)
 
+    # Pass 3 only: one entry per hard-rule break the solver chose (BoolVars,
+    # or IntVars counting several), in two tiers — availability (Rule 3:
+    # vacations, research end dates) costs more than any number of the
+    # other breaks (rules 6, 8, 9, 11). See relax_hard and the objective.
+    avail_breaks, other_breaks = [], []
+    all_idx = list(range(len(all_mondays)))
+    if not all_idx:
+        raise ValueError("No usable Mondays at all between the clinic start and end dates.")
+
+    def unless_broken(name, avail=False):
+        """Enforcement literals for a breakable hard rule: [] in passes 1-2
+        (the constraint is unconditional); in pass 3, [b.Not()] for a fresh
+        penalized break bool b — the constraint holds unless b is paid for."""
+        if not relax_hard:
+            return []
+        b = model.NewBoolVar(name)
+        (avail_breaks if avail else other_breaks).append(b)
+        return [b.Not()]
+
+    def break_unless_in(dv, ok_idx, name):
+        """Pass 3's soft Rule 3: dv may leave ok_idx, at the cost of an
+        availability break."""
+        if len(ok_idx) == len(all_idx):
+            return
+        b = model.NewBoolVar(name)
+        dom = cp_model.Domain.FromValues(ok_idx) if ok_idx else cp_model.Domain(-1, -1)
+        model.AddLinearExpressionInDomain(dv, dom).OnlyEnforceIf(b.Not())
+        avail_breaks.append(b)
+
+    # Pass 3: weeks each visit lands past its research fellow's end date,
+    # so visits that must break it cluster right after it instead of
+    # anywhere in the remaining clinic. Only lower-bounded; minimization
+    # keeps it tight.
+    end_overrun = []
+
     for ci, case in enumerate(cases):
         fellow = case["fellow"]
         f_allowed = allowed_indices(fellow)
-        case_fellow_allowed[ci] = f_allowed
         # Rule 3 (fellow half) + Rule 3 (MD half, since Med/Feedback's
-        # supervisor is fixed) can both be baked directly into the domain.
+        # supervisor is fixed) can both be baked directly into the domain —
+        # except in pass 3, where every Monday is open and leaving the
+        # allowed ones is a penalized break instead.
         fmd_allowed = allowed_indices(fellow, supervisor_vacation[md_supervisor])
-        case_md_allowed[ci] = fmd_allowed
+        case_fellow_allowed[ci] = all_idx if relax_hard else f_allowed
+        case_md_allowed[ci] = all_idx if relax_hard else fmd_allowed
 
         for vt in case["template"]:
-            if vt in ("Med", "Feedback"):
+            if relax_hard:
+                allowed = all_idx
+            elif vt in ("Med", "Feedback"):
                 allowed = fmd_allowed
             else:  # KSADS1/2/3 — PhD supervisor unresolved yet, see below
                 allowed = f_allowed
             if not allowed:
-                raise ValueError(
-                    f"No feasible Mondays at all for {fellow} (case {ci}, "
-                    f"visit {vt}) — vacations+holidays block everything."
-                )
+                # Strictly impossible — passes 1-2 report INFEASIBLE, and
+                # pass 3 schedules it over the vacation instead.
+                return _empty_result("INFEASIBLE")
             dv = model.NewIntVarFromDomain(cp_model.Domain.FromValues(allowed),
                                             f"date_{ci}_{vt}")
             date_var[ci, vt] = dv
             modality_var[ci, vt] = model.NewBoolVar(f"inperson_{ci}_{vt}")
+            if relax_hard:
+                own_vac = fellow_own_vacation[fellow]
+                after_end = research_end_blocked_days(fellows[fellow], clinic_end)
+                break_unless_in(dv, [monday_idx[d] for d in all_mondays if d not in own_vac],
+                                f"break_fvac_{ci}_{vt}")
+                break_unless_in(dv, [monday_idx[d] for d in all_mondays if d not in after_end],
+                                f"break_fend_{ci}_{vt}")
+                if after_end:
+                    last_ok = max((monday_idx[d] for d in all_mondays if d not in after_end), default=-1)
+                    overrun = model.NewIntVar(0, len(all_idx), f"end_overrun_{ci}_{vt}")
+                    model.Add(overrun >= dv - last_ok)
+                    end_overrun.append(overrun)
+                if vt in ("Med", "Feedback"):
+                    md_ok = [monday_idx[d] for d in all_mondays
+                             if d not in supervisor_vacation[md_supervisor]]
+                    break_unless_in(dv, md_ok, f"break_mdvac_{ci}_{vt}")
 
         primary_var[ci] = model.NewIntVar(0, 2, f"primary_{ci}")
         if case["tier"] == 1:
@@ -169,6 +275,14 @@ def solve(config: dict, time_limit_s: int = 45):
     # itself a decision variable. Instead: for each case and each candidate
     # supervisor s, reify "is this case's [primary|secondary] supervisor
     # s?" once, then forbid that supervisor's vacation dates conditionally.
+    # In pass 3, each KSADS visit gets one break bool that lifts the forbid.
+    phd_vac_ok = {}  # (case_id, visit_type) -> unless_broken() literals
+
+    def phd_vac_enforced(ci, vt):
+        if (ci, vt) not in phd_vac_ok:
+            phd_vac_ok[ci, vt] = unless_broken(f"break_phdvac_{ci}_{vt}", avail=True)
+        return phd_vac_ok[ci, vt]
+
     for ci, case in enumerate(cases):
         f_allowed = case_fellow_allowed[ci]
         for s_name, s_idx in SUPERVISOR_INDEX.items():
@@ -180,12 +294,14 @@ def solve(config: dict, time_limit_s: int = 45):
                                        f"is_primary_{s_name}_{ci}")
             for vt in ("KSADS1", "KSADS2"):
                 for idx in forbidden_idx:
-                    model.Add(date_var[ci, vt] != idx).OnlyEnforceIf(is_primary_s)
+                    model.Add(date_var[ci, vt] != idx).OnlyEnforceIf(
+                        [is_primary_s] + phd_vac_enforced(ci, vt))
             if ci in secondary_var:
                 is_secondary_s = reified_eq(model, secondary_var[ci], s_idx,
                                              f"is_secondary_{s_name}_{ci}")
                 for idx in forbidden_idx:
-                    model.Add(date_var[ci, "KSADS3"] != idx).OnlyEnforceIf(is_secondary_s)
+                    model.Add(date_var[ci, "KSADS3"] != idx).OnlyEnforceIf(
+                        [is_secondary_s] + phd_vac_enforced(ci, "KSADS3"))
 
     # ---- Rule 4: KSADS visits within a case occur in increasing order ----
     for ci, case in enumerate(cases):
@@ -214,7 +330,8 @@ def solve(config: dict, time_limit_s: int = 45):
     # supervising KSADS1-3 while Med/Feedback fall on the MD's virtual
     # days).
     for ci, case in enumerate(cases):
-        model.Add(sum(modality_var[ci, vt] for vt in case["template"]) >= 1)
+        model.Add(sum(modality_var[ci, vt] for vt in case["template"]) >= 1).OnlyEnforceIf(
+            unless_broken(f"break_inperson_{ci}"))
 
     # ---- Rule 6: a fellow's cases run strictly sequentially ----
     # EVERY visit in case N+1 (not just its first) must fall after case N's
@@ -244,10 +361,11 @@ def solve(config: dict, time_limit_s: int = 45):
         case_ids_sorted = sorted(case_ids, key=lambda ci: cases[ci]["case_index"])
         for a, b in zip(case_ids_sorted, case_ids_sorted[1:]):
             for vt in cases[b]["template"]:
+                enforce = unless_broken(f"break_seq_{b}_{vt}")
                 if vt == "KSADS1":
-                    model.Add(date_var[b, vt] >= date_var[a, "Feedback"])
+                    model.Add(date_var[b, vt] >= date_var[a, "Feedback"]).OnlyEnforceIf(enforce)
                 else:
-                    model.Add(date_var[b, vt] > date_var[a, "Feedback"])
+                    model.Add(date_var[b, vt] > date_var[a, "Feedback"]).OnlyEnforceIf(enforce)
             late_feedback_var[a] = reified_eq(model, date_var[b, "KSADS1"], date_var[a, "Feedback"],
                                                f"late_feedback_{a}")
 
@@ -266,6 +384,28 @@ def solve(config: dict, time_limit_s: int = 45):
                 b = reified_eq(model, date_var[ci1, vt1], date_var[ci2, vt2],
                                 f"feq_{ci1}{vt1}_{ci2}{vt2}")
                 model.Add(b == 0)
+
+    # Rule 7 stays hard even in pass 3 (coordinator, 2026-10-19: a schedule
+    # that double-books the fellow is pointless — the program exists for
+    # them). Passes 1-2 need nothing more: Rule 6 keeps a fellow's other
+    # cases off their Feedback dates, except the next case's KSADS1 via the
+    # 2:15 escape valve. Pass 3 can break Rule 6, so it pins that down
+    # directly: a Feedback shares its date with none of the fellow's other
+    # cases' visits, that one escape-valve pairing aside.
+    if relax_hard:
+        for fellow, case_ids in by_fellow.items():
+            case_ids_sorted = sorted(case_ids, key=lambda ci: cases[ci]["case_index"])
+            next_case = dict(zip(case_ids_sorted, case_ids_sorted[1:]))
+            for a in case_ids:
+                for c in case_ids:
+                    if c == a:
+                        continue
+                    for vt in cases[c]["template"]:
+                        if c == next_case.get(a) and vt == "KSADS1":
+                            continue
+                        if c < a and vt == "Feedback":
+                            continue  # pair already constrained from the other side
+                        model.Add(date_var[a, "Feedback"] != date_var[c, vt])
 
     # ---- Rule 8: no supervisor double-booked (non-Feedback) same date ----
     # Confirmed a true HARD rule (a supervisor can't be in two places at
@@ -299,7 +439,8 @@ def solve(config: dict, time_limit_s: int = 45):
                 continue  # already all-different within case
             date_eq = reified_eq(model, d1, d2, f"pdeq_{ci1}{vt1}_{ci2}{vt2}")
             sup_eq = reified_eq(model, s1, s2, f"pseq_{ci1}{vt1}_{ci2}{vt2}")
-            model.Add(date_eq + sup_eq <= 1)
+            model.Add(date_eq + sup_eq <= 1).OnlyEnforceIf(
+                unless_broken(f"break_phd_{ci1}{vt1}_{ci2}{vt2}"))
 
     # ---- Rule 10 (updated 2026-10-01): modality defaults to in-person;
     # the only telehealth exception is a visit in a case_index==0 case
@@ -407,17 +548,43 @@ def solve(config: dict, time_limit_s: int = 45):
             model.AddBoolOr([late.Not(), on.Not()]).OnlyEnforceIf(l.Not())
             late_on[a][d] = l
 
+    # 4pm Med fallback (pass 2 only — see solve()): med_4pm[ci] moves case
+    # ci's Med to 4:00-5:30, clear of everything else in the MD's day, so it
+    # doesn't count against the noon line-up below. med4_on[ci][d] is its
+    # per-date indicator: exactly one date (the Med's own) iff med_4pm. No
+    # Rule 7 change is needed for a fellow's noon KSADS + 4pm Med on one
+    # day: Rule 6 already keeps a fellow's other cases off any Med's date,
+    # and a case's own visits are all-different.
+    med_4pm, med4_on = {}, {}
+    if allow_4pm_med:
+        for ci in range(len(cases)):
+            med_4pm[ci] = model.NewBoolVar(f"med_4pm_{ci}")
+            med4_on[ci] = {d: model.NewBoolVar(f"med4_on_{ci}_{d}") for d in on_date[ci, "Med"]}
+            model.Add(sum(med4_on[ci].values()) == med_4pm[ci])
+            for d, b in med4_on[ci].items():
+                model.Add(b <= on_date[ci, "Med"][d])
+
     md_dates = sorted({d for bools in on_date.values() for d in bools})
-    med_count, fb_count, late_count = {}, {}, {}
+    md_overbook = []  # pass 3: per-date IntVars, counted with other_breaks
+    med_count, fb_count, late_count = {}, {}, {}  # med_count: noon Meds only
     for d in md_dates:
+        med4_count = sum(med4_on[ci][d] for ci in med4_on if d in med4_on[ci])
         med_count[d] = sum(on_date[ci, "Med"][d] for ci in range(len(cases))
-                           if d in on_date[ci, "Med"])
+                           if d in on_date[ci, "Med"]) - med4_count
         fb_count[d] = sum(on_date[ci, "Feedback"][d] for ci in range(len(cases))
                           if d in on_date[ci, "Feedback"])
         late_count[d] = sum(late_on[a][d] for a in late_on if d in late_on[a])
-        model.Add(med_count[d] <= 1)                    # Rule 8, MD half
-        model.Add(fb_count[d] + 2 * med_count[d] <= 3)  # Med takes 12:00 AND 12:45
-        model.Add(late_count[d] <= 1)                   # only one 2:15 slot
+        # Pass 3: md_over[d] counts the MD's overbooking that day, one hard
+        # break per extra appointment.
+        over = 0
+        if relax_hard:
+            over = model.NewIntVar(0, 2 * len(cases), f"break_md_over_{d}")
+            md_overbook.append(over)
+        model.Add(med_count[d] <= 1 + over)                    # Rule 8, MD half
+        model.Add(fb_count[d] + 2 * med_count[d] <= 3 + over)  # Med takes 12:00 AND 12:45
+        model.Add(late_count[d] <= 1 + over)                   # only one 2:15 slot
+        if med4_on:
+            model.Add(med4_count <= 1 + over)                  # only one 4:00 slot
 
     # ======================================================================
     # Soft rules — four separately-named penalty lists so the summary can
@@ -523,7 +690,10 @@ def solve(config: dict, time_limit_s: int = 45):
     penalty_fb_triple = []
     for d in md_dates:
         s5 = model.NewBoolVar(f"fb215_{d}")
-        triple = model.NewBoolVar(f"fb_triple_{d}")
+        # An overbooked pass-3 day can hold 4+ Feedbacks, which a bool
+        # triple couldn't cover.
+        triple = (model.NewIntVar(0, len(cases), f"fb_triple_{d}") if relax_hard
+                  else model.NewBoolVar(f"fb_triple_{d}"))
         model.Add(fb_count[d] - 2 <= triple)
         model.Add(s5 + triple >= med_count[d] + fb_count[d] - 1 - late_count[d])
         penalty_fb_215.append(s5)
@@ -566,33 +736,77 @@ def solve(config: dict, time_limit_s: int = 45):
     #   1000 3-Feedback day (Soft 6), round doubling (Soft 7) — last resorts
     # Round doubling's weight applies to both its total and its per-
     # supervisor max. (Rule 8 — supervisor conflict — is NOT part of this
-    # objective at all; it's a hard forbid above.)
+    # objective at all; it's a hard forbid above, outside pass 3.)
     W_LOW, W_MD_DAY, W_KSADS3, W_LAST_RESORT = 1, 10, 100, 1000
-    model.Minimize(
+    soft_objective = (
         W_LOW * (sum(penalty_med_position) + sum(penalty_supervisor_variety))
         + W_MD_DAY * (sum(penalty_case_gap) + sum(penalty_fb_215))
         + W_KSADS3 * sum(penalty_ksads3_mismatch)
         + W_LAST_RESORT * (sum(penalty_fb_triple)
                            + sum(penalty_round_double) + max_round_double)
     )
+    # A 4pm Med is a broken hard rule, so it outweighs every soft rule put
+    # together: one more 4pm Med is never traded for any soft-rule savings.
+    # W_4PM exceeds the soft objective's largest possible value.
+    soft_upper_bound = (
+        W_LOW * (len(penalty_med_position) + len(penalty_supervisor_variety))
+        + W_MD_DAY * (len(penalty_case_gap) + len(penalty_fb_215))
+        + W_KSADS3 * len(penalty_ksads3_mismatch)
+        + W_LAST_RESORT * (len(penalty_fb_triple) * (len(cases) if relax_hard else 1)
+                           + sum(len(ids) - 1 for ids in by_round.values()) * len(SUPERVISOR_INDEX)
+                           + len(cases))
+    )
+    # Each tier below outweighs everything beneath it combined (pass 3 adds
+    # the top three; in passes 1-2 they're empty), most important first:
+    #   availability breaks (vacations, research end dates)
+    #   other hard-rule breaks (rules 6, 8, 9, 11)
+    #   4pm Meds (at most one per case)
+    #   weeks past a research end date (end_overrun)
+    #   soft rules
+    # The bottom three tiers share one weighted objective; the two pass-3
+    # break tiers above it are solved lexicographically instead (below) —
+    # weights big enough to stack them made a single solve too slow.
+    W_OVERRUN = soft_upper_bound + 1
+    W_4PM = W_OVERRUN * (len(end_overrun) * len(all_idx) + 1)
+    base_objective = (soft_objective + W_OVERRUN * sum(end_overrun)
+                      + W_4PM * sum(med_4pm.values()))
+    stages = [base_objective]
+    if relax_hard:
+        stages = [sum(avail_breaks), sum(other_breaks) + sum(md_overbook), base_objective]
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_s
     # Parallel search workers. Defaults to 8 (fine on a multi-core
     # machine); the deployed API overrides it via SOLVER_WORKERS in
     # render.yaml, since on a fractional-CPU host every extra worker just
     # competes for the same CPU slice and can push the solve past the time
     # limit (FEASIBLE instead of OPTIMAL).
     solver.parameters.num_search_workers = int(os.environ.get("SOLVER_WORKERS", 8))
-    status = solver.Solve(model)
 
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        # UNKNOWN means the time limit ran out before ANY schedule was
-        # found — not proof that none exists. Report it distinctly so the
-        # caller doesn't tell the user their inputs are impossible.
-        return {"status": "TIMEOUT" if status == cp_model.UNKNOWN else "INFEASIBLE",
-                "cases": [], "soft_violations": {},
-                "soft_violation_details": {}, "supervisor_case_load": {}}
+    # One solve per stage, each minimizing its tier and then pinning it at
+    # the best value found before the next. Each stage after the first is
+    # handed the previous solution as a complete hint, so it starts from a
+    # schedule that already meets every pinned bound. Stages split the
+    # remaining time evenly, so one hard tier can't starve the rest.
+    deadline = time.monotonic() + time_limit_s
+    status = None
+    for i, objective in enumerate(stages):
+        model.Minimize(objective)
+        stage_limit = (deadline - time.monotonic()) / (len(stages) - i)
+        solver.parameters.max_time_in_seconds = max(1.0, stage_limit)
+        stage_status = solver.Solve(model)
+        if stage_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            # UNKNOWN means the time limit ran out before ANY schedule was
+            # found — not proof that none exists. Report it distinctly so
+            # the caller doesn't tell the user their inputs are impossible.
+            return _empty_result("TIMEOUT" if stage_status == cp_model.UNKNOWN else "INFEASIBLE")
+        status = (stage_status if status in (None, cp_model.OPTIMAL)
+                  else cp_model.FEASIBLE)  # OPTIMAL only if every stage was
+        if i + 1 < len(stages):
+            model.Add(objective <= int(solver.ObjectiveValue()))
+            solution = solver.ResponseProto().solution
+            model.ClearHints()
+            model.Proto().solution_hint.vars.extend(range(len(solution)))
+            model.Proto().solution_hint.values.extend(solution)
 
     def val(lst):
         return solver.Value(sum(lst)) if lst else 0
@@ -649,7 +863,8 @@ def solve(config: dict, time_limit_s: int = 45):
     # Med/Feedback line-up rather than from any solver variable.
     is_late = {ci: ci in late_feedback_var and bool(solver.Value(late_feedback_var[ci]))
                for ci in range(len(cases))}
-    med_dates = {solver.Value(date_var[ci, "Med"]) for ci in range(len(cases))}
+    is_4pm = {ci: ci in med_4pm and bool(solver.Value(med_4pm[ci])) for ci in range(len(cases))}
+    med_dates = {solver.Value(date_var[ci, "Med"]) for ci in range(len(cases)) if not is_4pm[ci]}
     fb_by_date = {}
     for ci in range(len(cases)):
         fb_by_date.setdefault(solver.Value(date_var[ci, "Feedback"]), []).append(ci)
@@ -692,10 +907,15 @@ def solve(config: dict, time_limit_s: int = 45):
                 sup = secondary_name
             else:  # KSADS1, KSADS2
                 sup = primary_name
-            # Start time (Rule 11): only Feedback varies; everything else
-            # is always 12:00.
-            time = fb_time[ci] if vt == "Feedback" else "12:00"
-            visits.append({"type": vt, "date": d.isoformat(), "time": time,
+            # Start time (Rule 11): Feedback varies, and a Med is 16:00 when
+            # the fallback moved it; everything else is always 12:00.
+            if vt == "Feedback":
+                start = fb_time[ci]
+            elif vt == "Med" and is_4pm[ci]:
+                start = "16:00"
+            else:
+                start = "12:00"
+            visits.append({"type": vt, "date": d.isoformat(), "time": start,
                             "modality": modality, "supervisor": sup})
         out_cases.append({
             "fellow": case["fellow"],
@@ -712,6 +932,10 @@ def solve(config: dict, time_limit_s: int = 45):
 
     return {
         "status": "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
+        # Pass 3's best-fitting schedule, which breaks hard rules — the
+        # verifier lists which. Its status is about how well it fits, not
+        # whether it's valid.
+        "partial": relax_hard,
         "soft_violations": {
             "supervisor_variety (soft #2)": val(penalty_supervisor_variety),
             "ksads3_mismatch (soft #1)": val(penalty_ksads3_mismatch),
@@ -729,5 +953,12 @@ def solve(config: dict, time_limit_s: int = 45):
             "feedback_triple (soft #6)": fb_triple_details,
         },
         "supervisor_case_load": supervisor_case_load,
+        # The one hard rule the fallback may break (see solve()): every Med
+        # it moved to 4:00. Empty whenever pass 1 succeeded.
+        "med_4pm": [
+            {"fellow": case["fellow"], "case_index": case["case_index"],
+             "date": all_mondays[solver.Value(date_var[ci, "Med"])].isoformat()}
+            for ci, case in enumerate(cases) if is_4pm[ci]
+        ],
         "cases": out_cases,
     }

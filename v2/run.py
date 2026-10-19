@@ -42,6 +42,17 @@ def main():
 
     print(f"Status: {result['status']}\n")
 
+    if result["partial"]:
+        print("NO FEASIBLE SCHEDULE — this is the closest partial schedule; the "
+              "verifier below lists every hard rule it breaks.\n")
+
+    if result["med_4pm"]:
+        print("No schedule satisfies every hard rule — last-resort fallback moved "
+              f"{len(result['med_4pm'])} Med visit(s) to 4:00 pm:")
+        for m in result["med_4pm"]:
+            print(f"   {m['fellow']} case {m['case_index']} Med on {m['date']}")
+        print()
+
     print("Soft rule violations (breakdown):")
     for k, v in result["soft_violations"].items():
         print(f"   {k}: {v}")
