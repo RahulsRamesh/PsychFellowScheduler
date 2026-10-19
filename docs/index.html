@@ -34,11 +34,11 @@
       <div class="field-row">
         <label>
           <span>Start date <span class="required-marker" aria-hidden="true">*</span></span>
-          <input type="date" id="clinic_start" required>
+          <input type="date" max="9999-12-31" id="clinic_start" required>
         </label>
         <label>
           <span>End date <span class="required-marker" aria-hidden="true">*</span></span>
-          <input type="date" id="clinic_end" required>
+          <input type="date" max="9999-12-31" id="clinic_end" required>
         </label>
       </div>
       <small class="field-error" id="clinic-dates-error"></small>
@@ -124,9 +124,9 @@
 <!-- Reusable row templates, cloned by app.js -->
 <template id="tpl-daterange-row">
   <div class="row date-range-row">
-    <input type="date" class="start" required>
+    <input type="date" max="9999-12-31" class="start" required>
     <span class="to">to</span>
-    <input type="date" class="end" required>
+    <input type="date" max="9999-12-31" class="end" required>
     <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove date range">&times;</button>
     <small class="field-error"></small>
   </div>
@@ -140,9 +140,9 @@
      every supervisor's and fellow's vacation lists. -->
 <template id="tpl-holiday-row">
   <div class="row date-range-row">
-    <input type="date" class="start" required>
+    <input type="date" max="9999-12-31" class="start" required>
     <span class="to">to</span>
-    <input type="date" class="end" required>
+    <input type="date" max="9999-12-31" class="end" required>
     <input type="text" class="notes" placeholder="e.g. Labor Day">
     <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove date range">&times;</button>
     <small class="field-error"></small>
@@ -162,7 +162,7 @@
            app.js): their last working day, inclusive. -->
       <label class="research-end-field" hidden>
         End date
-        <input type="date" class="fellow-end-date">
+        <input type="date" max="9999-12-31" class="fellow-end-date">
         <span class="required-marker" aria-hidden="true">*</span>
       </label>
       <button type="button" class="remove-btn" data-action="remove-row" aria-label="Remove fellow">&times;</button>
