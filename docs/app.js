@@ -141,7 +141,7 @@ try {
   const savedResultJson = localStorage.getItem(STORAGE_KEY_RESULT);
   if (savedResultJson) {
     const saved = JSON.parse(savedResultJson);
-    renderResults(saved.result, saved.hardRuleViolations);
+    renderResults(saved.result, saved.hardRuleViolations, saved.config);
   }
 } catch (e) {
   // ignore a corrupted saved result — just don't show anything
@@ -341,9 +341,9 @@ function scheduleSave() {
   }, 400);
 }
 
-function saveResult(result, hardRuleViolations) {
+function saveResult(result, hardRuleViolations, config) {
   try {
-    localStorage.setItem(STORAGE_KEY_RESULT, JSON.stringify({ result, hardRuleViolations }));
+    localStorage.setItem(STORAGE_KEY_RESULT, JSON.stringify({ result, hardRuleViolations, config }));
   } catch (e) {
     // ignore — see note above
   }
@@ -649,8 +649,8 @@ async function runSolve(config) {
       return;
     }
 
-    renderResults(body.result, body.hard_rule_violations);
-    saveResult(body.result, body.hard_rule_violations);
+    renderResults(body.result, body.hard_rule_violations, config);
+    saveResult(body.result, body.hard_rule_violations, config);
   } catch (err) {
     if (err.name === "AbortError") {
       pendingRetryConfig = config;
@@ -944,7 +944,11 @@ function renderSchedule(container, cases, groupBy) {
   });
 }
 
-function renderResults(result, hardRuleViolations) {
+// `config` is the exact input that was solved — the Excel export needs
+// its holidays/vacations/virtual days. Results saved before it was stored
+// alongside them don't have it; the export then falls back to the
+// current form.
+function renderResults(result, hardRuleViolations, config) {
   resultsEl.innerHTML = "";
   resultsEl.hidden = false;
 
@@ -965,6 +969,27 @@ function renderResults(result, hardRuleViolations) {
       hardRuleViolations.map((v) => `• ${v}`).join("<br>");
   }
   resultsEl.appendChild(verifyLine);
+
+  const exportRow = document.createElement("div");
+  exportRow.className = "data-tools";
+  const exportBtn = document.createElement("button");
+  exportBtn.type = "button";
+  exportBtn.textContent = "Download Excel";
+  const exportError = document.createElement("span");
+  exportError.className = "export-error";
+  exportBtn.addEventListener("click", async () => {
+    exportBtn.disabled = true;
+    exportError.textContent = "";
+    try {
+      await downloadScheduleExcel(result, config || assembleConfig(), phdDisplayName);
+    } catch (e) {
+      exportError.textContent = "Couldn't create the Excel file. Check your internet connection and try again.";
+    } finally {
+      exportBtn.disabled = false;
+    }
+  });
+  exportRow.append(exportBtn, exportError);
+  resultsEl.appendChild(exportRow);
 
   // Click-to-highlight: at most one tile is active at a time. The active
   // tile's highlight target lives here (not in the DOM) so it survives the

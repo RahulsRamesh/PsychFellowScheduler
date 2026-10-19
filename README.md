@@ -27,6 +27,7 @@ docs/                             # the frontend — deployed via GitHub Pages (
   style.css
   config.js                       # API_BASE / API_KEY — see "Frontend" for why this is public
   app.js                          # form logic, validation, fetch, results rendering
+  excel-export.js                 # "Download Excel": builds the Assessment Blocks workbook in-browser (ExcelJS)
 ```
 
 `verify.py` deliberately imports only `helpers.py`, never `solve.py` —

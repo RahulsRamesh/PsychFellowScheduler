@@ -72,6 +72,17 @@ main {
   background: #f0f0ee;
 }
 
+.data-tools button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.export-error {
+  align-self: center;
+  font-size: 0.85rem;
+  color: var(--color-error);
+}
+
 @media print {
   .data-tools { display: none !important; }
 }
