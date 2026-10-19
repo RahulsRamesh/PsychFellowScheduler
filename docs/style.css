@@ -233,6 +233,14 @@ select.invalid {
   font-size: 0.85rem;
 }
 
+/* End date still following the start date (a single day) — see
+   setEndLinked in app.js. Turns normal once clicked into. */
+.date-range-row .end.linked {
+  color: var(--color-text-muted);
+  background: #f4f4f1;
+  border-style: dashed;
+}
+
 .date-range-row .notes {
   flex: 1 1 12rem;
   min-width: 8rem;

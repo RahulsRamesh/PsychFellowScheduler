@@ -119,6 +119,58 @@ document.body.addEventListener("change", (e) => {
   if (e.target.matches(".fellow-type")) syncResearchEndField(e.target.closest(".fellow-row"));
 });
 
+// Date-range rows default to a single day: while a row's end date is
+// "linked" it's greyed out and copies the start date as it's typed.
+// Focusing the end date (click or tab) unlinks it into a normal field
+// for a real range; leaving it empty or equal to the start re-links it.
+function setEndLinked(endEl, linked) {
+  endEl.classList.toggle("linked", linked);
+  endEl.title = linked ? "Same as the start date — click to make this a date range" : "";
+}
+
+function endFollowsStart(row) {
+  const start = row.querySelector(".start");
+  const end = row.querySelector(".end");
+  setEndLinked(end, true);
+  end.value = start.value;
+  clearFieldError(end);
+}
+
+// Rows are added by the add-row button, sample data and restoring a saved
+// form, always with their values already set — so a row starts linked
+// exactly when it's still a single day (or blank).
+new MutationObserver((mutations) => {
+  mutations.forEach((m) => m.addedNodes.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const rows = node.matches(".date-range-row") ? [node] : node.querySelectorAll(".date-range-row");
+    rows.forEach((row) => {
+      const start = row.querySelector(".start").value;
+      const end = row.querySelector(".end");
+      setEndLinked(end, end.value === "" || end.value === start);
+    });
+  }));
+}).observe(document.body, { childList: true, subtree: true });
+
+document.body.addEventListener("input", (e) => {
+  if (!e.target.matches(".date-range-row .start")) return;
+  const row = e.target.closest(".date-range-row");
+  if (row.querySelector(".end").classList.contains("linked")) endFollowsStart(row);
+});
+
+document.body.addEventListener("focusin", (e) => {
+  if (e.target.matches(".date-range-row .end")) setEndLinked(e.target, false);
+});
+
+document.body.addEventListener("focusout", (e) => {
+  if (!e.target.matches(".date-range-row .end")) return;
+  const row = e.target.closest(".date-range-row");
+  const end = e.target.value;
+  if (end === "" || end === row.querySelector(".start").value) {
+    endFollowsStart(row);
+    scheduleSave();
+  }
+});
+
 // Restore a saved form (and last schedule, since rerunning the solver can
 // yield a different result — see renderResults) if one exists in
 // localStorage; otherwise start with one empty fellow row so the form
@@ -664,6 +716,9 @@ async function runSolve(config) {
       return;
     }
 
+    // Carried on the result so it's saved and restored with it and reaches
+    // the Excel export, which highlights these visits.
+    body.result.hard_rule_violation_visits = body.hard_rule_violation_visits || [];
     renderResults(body.result, body.hard_rule_violations, config);
     saveResult(body.result, body.hard_rule_violations, config);
     succeeded = true;

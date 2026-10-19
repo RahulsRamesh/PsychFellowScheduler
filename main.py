@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from v2.solve import solve
-from v2.verify import verify_schedule
+from v2.verify import verify_schedule_with_visits
 
 app = FastAPI(
     title="Psych Fellow Scheduling Engine",
@@ -72,8 +72,12 @@ def solve_endpoint(config: dict, _: None = Depends(require_api_key)):
         # all, raised directly by solve() during domain construction.
         raise HTTPException(status_code=422, detail=str(e))
 
-    violations = (
-        verify_schedule(config, result) if result["status"] in ("OPTIMAL", "FEASIBLE") else []
+    violations, violation_visits = (
+        verify_schedule_with_visits(config, result)
+        if result["status"] in ("OPTIMAL", "FEASIBLE") else ([], [])
     )
 
-    return {"result": result, "hard_rule_violations": violations}
+    # hard_rule_violation_visits: every visit some violation involves
+    # ({fellow, case_index, type}) — the Excel export highlights them.
+    return {"result": result, "hard_rule_violations": violations,
+            "hard_rule_violation_visits": violation_visits}

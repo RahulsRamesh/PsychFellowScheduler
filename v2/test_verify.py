@@ -374,3 +374,17 @@ def test_rule7_noon_feedback_beside_fellows_other_visit(clean_result, config):
     k1 = visit_of(case_of(bad, "Fellow A", 2), "KSADS1")
     fb["date"], fb["time"] = k1["date"], "12:00"
     assert_rule_flagged(verify_schedule(config, bad), 7)
+
+
+def test_violation_visits_name_every_visit_involved(clean_result, config):
+    # A Rule 8 clash involves both visits — both must be reported for the
+    # Excel export to highlight. A clean schedule reports none.
+    from v2.verify import verify_schedule_with_visits
+    assert verify_schedule_with_visits(config, clean_result) == ([], [])
+    bad = copy.deepcopy(clean_result)
+    va = visit_of(case_of(bad, "Fellow A", 1), "KSADS1")
+    vb = visit_of(case_of(bad, "Fellow B", 1), "KSADS1")
+    vb["supervisor"], vb["date"] = va["supervisor"], va["date"]
+    _, visits = verify_schedule_with_visits(config, bad)
+    assert {"fellow": "Fellow A", "case_index": 1, "type": "KSADS1"} in visits
+    assert {"fellow": "Fellow B", "case_index": 1, "type": "KSADS1"} in visits

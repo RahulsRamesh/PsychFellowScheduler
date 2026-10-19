@@ -26,6 +26,7 @@ const XL_RED = "FFFF0000";
 const XL_PURPLE = "FF7030A0";
 const XL_BLUE = "FF00B0F0"; // the MD's visits (Med, Feedback)
 const XL_BLACK = "FF000000";
+const XL_YELLOW = "FFFFFF00"; // fill for a visit that breaks a hard rule
 
 // "Jennifer Tu" -> "JT"
 function initials(name) {
@@ -112,6 +113,16 @@ function buildScheduleWorkbook(ExcelJS, result, config, phdFullName) {
   const caseAt = new Map(result.cases.map((c) => [`${c.fellow}\u0000${c.case_index}`, c]));
   const rounds = [...new Set(result.cases.map((c) => c.case_index))].sort((a, b) => a - b);
 
+  // Visits breaking a hard rule — every visit the verifier flagged, plus
+  // any last-resort 4pm Med — get a yellow row so they're easy to spot.
+  // Results saved before this existed carry neither list.
+  const visitKey = (fellow, caseIndex, type) => `${fellow}\u0000${caseIndex}\u0000${type}`;
+  const broken = new Set([
+    ...(result.hard_rule_violation_visits || []).map((v) => visitKey(v.fellow, v.case_index, v.type)),
+    ...(result.med_4pm || []).map((m) => visitKey(m.fellow, m.case_index, "Med")),
+  ]);
+  const yellowFill = { type: "pattern", pattern: "solid", fgColor: { argb: XL_YELLOW } };
+
   const holidayText = `Holiday: ${dateList(config.holidays, config) || "none"}`;
   const mdText = availabilityText(initials(md.name), md.vacations, md.virtual_days, config);
 
@@ -176,6 +187,10 @@ function buildScheduleWorkbook(ExcelJS, result, config, phdFullName) {
       dateCell.value = visitDateText(v, c, phdFullName);
       dateCell.font = font({ color: { argb: color } });
       dateCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+      if (broken.has(visitKey(c.fellow, c.case_index, v.type))) {
+        ws.getCell(r, L).fill = yellowFill;
+        dateCell.fill = yellowFill;
+      }
     });
 
     const phdText = [c.primary_supervisor, secondary].filter(Boolean).map((name) => {
