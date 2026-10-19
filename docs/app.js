@@ -55,7 +55,6 @@ const errorMessageEl = document.getElementById("error-message");
 const retryBtn = document.getElementById("retry-btn");
 const resultsEl = document.getElementById("results");
 
-let serverLikelyWarm = false;
 let pendingRetryConfig = null;
 
 // Versioned so a future schema change can be introduced by bumping the
@@ -68,9 +67,10 @@ const STORAGE_KEY_RESULT = "pfs-last-result-v1";
 // Wake the Render free-tier instance the moment the page loads, well
 // before the coordinator finishes the form — the single highest-leverage
 // thing we can do about the ~30-60s cold start. No custom headers, so no
-// CORS preflight.
+// CORS preflight. (Whether the server is awake is judged separately at
+// solve time — see runSolve.)
 // ---------------------------------------------------------------------
-fetch(`${API_BASE}/health`).then((r) => { if (r.ok) serverLikelyWarm = true; }).catch(() => {});
+fetch(`${API_BASE}/health`, { cache: "no-store" }).catch(() => {});
 
 // ---------------------------------------------------------------------
 // Dynamic row add/remove — one delegated listener handles every
@@ -590,17 +590,39 @@ function hideError() {
   retryBtn.hidden = true;
 }
 
+const CALCULATING_MESSAGE = "Calculating schedule...";
+const WAKING_MESSAGE = "Waking up the server – this can take up to a minute. Please don't close this tab.";
+
 async function runSolve(config) {
   hideError();
   resultsEl.hidden = true;
   submitBtn.disabled = true;
-  showLoading("Calculating schedule...");
+  showLoading(CALCULATING_MESSAGE);
 
+  // Is the server awake? A sleeping Render instance doesn't refuse
+  // requests — it holds them while it boots (~30-60s) and then answers
+  // normally, so /health's "ok" alone says nothing. What tells us is how
+  // long it takes: an awake server answers in well under a second. So
+  // ping /health alongside the solve; if it hasn't answered within 3s,
+  // the server is booting — say so — and once it answers, it's up and
+  // the solve itself is what's left.
+  let finished = false;
+  let serverUp = false;
   const wakingTimer = setTimeout(() => {
-    if (!serverLikelyWarm) {
-      showLoading("Waking up the server – this can take up to a minute. Please don't close this tab.");
-    }
-  }, 4000);
+    if (!finished && !serverUp) showLoading(WAKING_MESSAGE);
+  }, 3000);
+  fetch(`${API_BASE}/health`, { cache: "no-store" })
+    .then((r) => {
+      if (!r.ok) return;
+      serverUp = true;
+      if (!finished) showLoading(CALCULATING_MESSAGE);
+    })
+    .catch(() => {});
+
+  // Set only once a new schedule is rendered. Until then, any failure
+  // puts the previous schedule (if there is one) back on screen — see
+  // the finally block.
+  let succeeded = false;
 
   const controller = new AbortController();
   const timeoutTimer = setTimeout(() => controller.abort(), SOLVE_TIMEOUT_MS);
@@ -630,7 +652,6 @@ async function runSolve(config) {
     }
 
     const body = await response.json();
-    serverLikelyWarm = true;
 
     if (body.result.status === "INFEASIBLE") {
       showError("No valid schedule could be found with these inputs. This usually means vacation or holiday dates leave too little room for the hard scheduling rules to be satisfied. Try adjusting vacation dates and solving again.");
@@ -645,6 +666,7 @@ async function runSolve(config) {
 
     renderResults(body.result, body.hard_rule_violations, config);
     saveResult(body.result, body.hard_rule_violations, config);
+    succeeded = true;
   } catch (err) {
     if (err.name === "AbortError") {
       pendingRetryConfig = config;
@@ -654,10 +676,18 @@ async function runSolve(config) {
       showError("Could not reach the server. Check your internet connection and try again.", { retry: true });
     }
   } finally {
+    finished = true;
     clearTimeout(wakingTimer);
     clearTimeout(timeoutTimer);
     hideLoading();
     submitBtn.disabled = false;
+    // A failed attempt keeps the last good schedule visible instead of
+    // leaving the page blank, and the error says that's what it is (it
+    // may not match the inputs that were just submitted).
+    if (!succeeded && resultsEl.childElementCount > 0) {
+      resultsEl.hidden = false;
+      errorMessageEl.textContent += " The schedule shown below is the previous one, from before this attempt.";
+    }
   }
 }
 
