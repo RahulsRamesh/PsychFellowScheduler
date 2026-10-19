@@ -809,7 +809,7 @@ const TIME_BADGES = {
   "12:45": { text: "12:45pm", title: "Appointment is moved to 12:45pm to accommodate multiple same-day appointments." },
   "14:15": { text: "2:15pm", title: "Appointment is pushed back to accommodate a same day appointment." },
 };
-const MED_4PM_BADGE = { text: "4pm", title: "Last resort: no schedule fits every hard rule, so this Med visit is moved to 4pm." };
+const MED_4PM_BADGE = { text: "4pm", title: "No optimal schedule was found that fits every hard rule, so this Med visit is moved to 4pm." };
 
 // Results saved before visits carried a `time` field only had a `late`
 // flag (2:15) — treat any other legacy Feedback as noon.
@@ -1007,8 +1007,8 @@ function brokenRulesBox(med4pm, violations, partial) {
 
   const intro = document.createElement("p");
   intro.textContent = partial
-    ? "No schedule satisfies every hard rule with these inputs, even with Med visits moved to 4pm. Below is the closest schedule the solver could find — use it as a starting point and resolve each item below by hand. It never double-books a fellow, avoids vacations and research end dates wherever possible, and otherwise breaks as few hard rules as it can."
-    : "No schedule satisfies every hard rule with these inputs, so as a last resort the following Med visits are scheduled at 4pm instead of 12pm. Every other rule is met.";
+    ? "No schedule satisfies every hard rule with these inputs, even with Med visits moved to 4pm. Below is the closest schedule the solver could find. It never double-books a fellow, avoids vacations and research end dates wherever possible, and otherwise breaks as few hard rules as it can."
+    : "No schedule satisfies every hard rule with these inputs, so the following Med visits are scheduled at 4pm instead of 12pm. Every other rule is met.";
   box.appendChild(intro);
 
   const groups = [];
