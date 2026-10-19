@@ -137,15 +137,9 @@ try {
 }
 if (!restoredForm) addFellowRow();
 
-try {
-  const savedResultJson = localStorage.getItem(STORAGE_KEY_RESULT);
-  if (savedResultJson) {
-    const saved = JSON.parse(savedResultJson);
-    renderResults(saved.result, saved.hardRuleViolations, saved.config);
-  }
-} catch (e) {
-  // ignore a corrupted saved result — just don't show anything
-}
+// The saved schedule is restored at the very end of this file, not here:
+// renderResults uses top-level consts declared further down (the soft-
+// rule tile maps), which don't exist yet at this point in the script.
 
 // ---------------------------------------------------------------------
 // Dev-only "Load sample data" button — gated on config.js's
@@ -971,10 +965,10 @@ function renderResults(result, hardRuleViolations, config) {
   resultsEl.appendChild(verifyLine);
 
   const exportRow = document.createElement("div");
-  exportRow.className = "data-tools";
+  exportRow.className = "data-tools export-row";
   const exportBtn = document.createElement("button");
   exportBtn.type = "button";
-  exportBtn.textContent = "Download Excel";
+  exportBtn.textContent = "Download as Excel";
   const exportError = document.createElement("span");
   exportError.className = "export-error";
   exportBtn.addEventListener("click", async () => {
@@ -1144,4 +1138,18 @@ function renderResults(result, hardRuleViolations, config) {
 
   byFellowBtn.classList.add("active");
   rerenderSchedule();
+}
+
+// Restore the last schedule (see the form-restore note near the top).
+// Must stay at the bottom of the file — renderResults depends on consts
+// declared above, and calling it before they're initialized throws
+// partway through rendering (the tiles and schedule silently vanish).
+try {
+  const savedResultJson = localStorage.getItem(STORAGE_KEY_RESULT);
+  if (savedResultJson) {
+    const saved = JSON.parse(savedResultJson);
+    renderResults(saved.result, saved.hardRuleViolations, saved.config);
+  }
+} catch (e) {
+  // ignore a corrupted saved result — just don't show anything
 }
